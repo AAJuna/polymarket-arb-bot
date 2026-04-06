@@ -26,8 +26,52 @@ logger = get_logger(__name__)
 _session = requests.Session()
 _session.headers.update({"Accept": "application/json"})
 
-# Cache raw orderbooks for 5 seconds (avoid hammering CLOB)
+# Cache prices for 5 seconds
+_price_cache = TTLCache(ttl_seconds=5)
 _book_cache = TTLCache(ttl_seconds=5)
+
+BATCH_SIZE = 100  # max token_ids per batch request
+
+
+# ---------------------------------------------------------------------------
+# Batch price fetcher
+# ---------------------------------------------------------------------------
+
+@retry(max_attempts=2, base_delay=1.0, exceptions=(requests.RequestException,))
+def _fetch_midpoints_batch(token_ids: list[str]) -> dict[str, float]:
+    """Fetch midpoint prices for multiple tokens in one request.
+    Returns dict of token_id → midpoint price.
+    """
+    results: dict[str, float] = {}
+    # Split into chunks to avoid URL length limits
+    for i in range(0, len(token_ids), BATCH_SIZE):
+        chunk = token_ids[i:i + BATCH_SIZE]
+        # Check cache first
+        uncached = [t for t in chunk if _price_cache.get(t) is None]
+        for t in chunk:
+            cached = _price_cache.get(t)
+            if cached is not None:
+                results[t] = cached
+
+        if not uncached:
+            continue
+
+        try:
+            resp = _session.get(
+                f"{config.POLYMARKET_HOST}/midpoints",
+                params={"token_ids": ",".join(uncached)},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            for token_id, price_str in data.items():
+                price = float(price_str)
+                results[token_id] = price
+                _price_cache.set(token_id, price)
+        except Exception as e:
+            logger.debug(f"Batch midpoint fetch failed for chunk: {e}")
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -93,23 +137,27 @@ def _get_best_ask(token_id: str) -> Optional[float]:
 def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportunity]:
     """
     Buy YES + NO when total fee-adjusted cost < $1.
-    One guaranteed dollar of payout costs less than one dollar to acquire.
+    Uses batch midpoint API for efficiency — one request for all tokens.
     """
     opps: list[Opportunity] = []
 
-    for m in markets:
-        # Pre-filter using Gamma API prices before paying CLOB API cost.
-        # If Gamma prices already sum to >= 0.98, live orderbook won't show arb.
-        gamma_sum = m.yes_price + m.no_price
-        if gamma_sum >= 0.98:
-            continue
+    # Pre-filter: only markets where Gamma prices suggest possible mispricing
+    candidates = [m for m in markets if (m.yes_price + m.no_price) < 0.98]
+    if not candidates:
+        return []
 
-        try:
-            ask_yes = _get_best_ask(m.yes_token_id)
-            ask_no = _get_best_ask(m.no_token_id)
-        except Exception as e:
-            logger.debug(f"Orderbook fetch failed for {m.market_id}: {e}")
-            continue
+    # Fetch all midpoints in batch (1 HTTP request instead of N*2)
+    all_token_ids = []
+    for m in candidates:
+        all_token_ids.append(m.yes_token_id)
+        all_token_ids.append(m.no_token_id)
+
+    midpoints = _fetch_midpoints_batch(all_token_ids)
+    logger.debug(f"Batch midpoint fetch: {len(midpoints)} prices for {len(candidates)} candidate markets")
+
+    for m in candidates:
+        ask_yes = midpoints.get(m.yes_token_id)
+        ask_no = midpoints.get(m.no_token_id)
 
         if ask_yes is None or ask_no is None:
             continue
