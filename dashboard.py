@@ -33,12 +33,13 @@ st.markdown("""
   /* Base */
   html, body, [data-testid="stAppViewContainer"] {
     background-color: #0a0a0f;
-    color: #e0e0e0;
+    color: #e8eaf0;
     font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
   }
   [data-testid="stMain"] { background-color: #0a0a0f; }
   [data-testid="stHeader"] { background-color: #0a0a0f; }
   [data-testid="stSidebar"] { background-color: #0d0d14; }
+  p, span, div, label { color: #e8eaf0; }
 
   /* Dividers */
   hr { border-color: #1a1a2e !important; }
@@ -51,13 +52,13 @@ st.markdown("""
     padding: 16px 20px;
   }
   [data-testid="stMetricLabel"] {
-    color: #6b7280 !important;
+    color: #9ca3af !important;
     font-size: 0.7rem !important;
     text-transform: uppercase;
     letter-spacing: 0.1em;
   }
   [data-testid="stMetricValue"] {
-    color: #f0f0f0 !important;
+    color: #ffffff !important;
     font-size: 1.6rem !important;
     font-weight: 700;
     letter-spacing: -0.02em;
@@ -79,18 +80,18 @@ st.markdown("""
   }
   .stDataFrame table {
     background-color: #0d0d1a !important;
-    color: #c9d1d9 !important;
+    color: #e8eaf0 !important;
     font-size: 0.8rem !important;
   }
   .stDataFrame th {
     background-color: #111120 !important;
-    color: #8b949e !important;
+    color: #c0c8d8 !important;
     text-transform: uppercase;
     font-size: 0.7rem !important;
     letter-spacing: 0.08em;
-    border-bottom: 1px solid #1e1e3a !important;
+    border-bottom: 1px solid #2a2a4a !important;
   }
-  .stDataFrame td { border-color: #1a1a2e !important; }
+  .stDataFrame td { border-color: #1a1a2e !important; color: #e8eaf0 !important; }
   .stDataFrame tr:hover td { background-color: #161625 !important; }
 
   /* Progress bar */
@@ -114,11 +115,11 @@ st.markdown("""
   }
 
   /* Caption */
-  [data-testid="stCaptionContainer"] { color: #4b5563 !important; font-size: 0.72rem !important; }
+  [data-testid="stCaptionContainer"] { color: #9ca3af !important; font-size: 0.72rem !important; }
 
   /* Subheader */
   h2, h3 {
-    color: #a0aec0 !important;
+    color: #d1d5db !important;
     font-size: 0.75rem !important;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -138,19 +139,19 @@ st.markdown("""
     margin-bottom: 8px;
   }
   .stat-label {
-    color: #4b5563;
+    color: #9ca3af;
     font-size: 0.65rem;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     margin-bottom: 4px;
   }
-  .stat-value { font-size: 1.4rem; font-weight: 700; color: #f0f0f0; }
-  .stat-sub { font-size: 0.72rem; color: #6b7280; margin-top: 2px; }
+  .stat-value { font-size: 1.4rem; font-weight: 700; color: #ffffff; }
+  .stat-sub { font-size: 0.72rem; color: #9ca3af; margin-top: 2px; }
   .green { color: #00ff87; }
   .red { color: #ff4466; }
   .yellow { color: #fbbf24; }
   .blue { color: #60a5fa; }
-  .muted { color: #4b5563; }
+  .muted { color: #9ca3af; }
 
   /* Status badge */
   .badge {
@@ -184,10 +185,10 @@ st.markdown("""
     display: flex;
     justify-content: space-between;
     font-size: 0.7rem;
-    color: #6b7280;
+    color: #9ca3af;
     margin-bottom: 4px;
   }
-  .risk-val { color: #a0aec0; }
+  .risk-val { color: #e8eaf0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -483,7 +484,7 @@ st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
 with st.expander("⚙  Configuration"):
     c1, c2, c3 = st.columns(3)
     def cfg_row(label, val):
-        return f'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a1a2e"><span style="color:#4b5563;font-size:0.72rem">{label}</span><span style="color:#a0aec0;font-size:0.72rem">{val}</span></div>'
+        return f'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a1a2e"><span style="color:#9ca3af;font-size:0.72rem">{label}</span><span style="color:#e8eaf0;font-size:0.72rem">{val}</span></div>'
     with c1:
         st.markdown("**TRADING**", unsafe_allow_html=False)
         st.markdown(cfg_row("Min Edge", f"{config.MIN_EDGE_PCT}%") + cfg_row("AI Confidence", f"{config.MIN_AI_CONFIDENCE:.0%}") + cfg_row("Bet Size", f"{config.BET_SIZE_PCT}%") + cfg_row("Max Bet", f"${config.MAX_BET_SIZE}") + cfg_row("Max Exposure", f"{config.MAX_EXPOSURE_PCT}%"), unsafe_allow_html=True)
