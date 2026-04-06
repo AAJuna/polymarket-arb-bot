@@ -19,8 +19,8 @@ AI_STATS_FILE  = Path("data/ai_stats.json")
 REFRESH_SECONDS = 10
 
 st.set_page_config(
-    page_title="POLYMARKET BOT",
-    page_icon="⚡",
+    page_title="MeQ0L15",
+    page_icon="⚔️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -90,16 +90,18 @@ st.markdown("""
     display: flex; align-items: center; gap: 10px;
   }
   .logo-icon {
-    width: 34px; height: 34px; border-radius: 8px;
-    background: linear-gradient(135deg, #4f8ef7 0%, #7c5bf7 100%);
+    width: 36px; height: 36px; border-radius: 8px;
+    background: linear-gradient(135deg, #ff4466 0%, #7c5bf7 100%);
     display: flex; align-items: center; justify-content: center;
-    font-size: 1.1rem; line-height: 1;
+    font-size: 1.2rem; line-height: 1;
+    box-shadow: 0 0 16px #ff446640;
   }
   .logo-text {
-    font-size: 1.05rem; font-weight: 800; color: #ffffff;
-    letter-spacing: 0.06em; line-height: 1;
+    font-size: 1.15rem; font-weight: 900; color: #ffffff;
+    letter-spacing: 0.12em; line-height: 1;
+    text-shadow: 0 0 12px #ff446660;
   }
-  .logo-sub { font-size: 0.65rem; color: #6c7086; letter-spacing: 0.1em; margin-top: 1px; }
+  .logo-sub { font-size: 0.6rem; color: #6c7086; letter-spacing: 0.18em; margin-top: 3px; text-transform: uppercase; }
   .topbar-meta { display: flex; gap: 28px; align-items: center; }
   .meta-item { text-align: right; }
   .meta-label { font-size: 0.6rem; color: #6c7086; text-transform: uppercase; letter-spacing: 0.1em; }
@@ -261,10 +263,10 @@ mode_badge = '<span class="badge badge-paper">PAPER</span>' if config.PAPER_TRAD
 st.markdown(f"""
 <div class="topbar">
   <div class="logo">
-    <div class="logo-icon">⚡</div>
+    <div class="logo-icon">⚔️</div>
     <div>
-      <div class="logo-text">POLYMARKET BOT &nbsp;{mode_badge}</div>
-      <div class="logo-sub">AUTOMATED PREDICTION MARKET TRADER</div>
+      <div class="logo-text">MeQ0L15 &nbsp;{mode_badge}</div>
+      <div class="logo-sub">Polymarket War Machine</div>
     </div>
   </div>
   <div class="topbar-meta">
@@ -577,7 +579,7 @@ with st.expander("⚙  Configuration"):
 # Footer
 # ---------------------------------------------------------------------------
 
-st.markdown(f'<div class="footer">auto-refresh {REFRESH_SECONDS}s &nbsp;·&nbsp; {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC &nbsp;·&nbsp; polymarket-arb-bot</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">MeQ0L15 · Polymarket War Machine &nbsp;·&nbsp; auto-refresh {REFRESH_SECONDS}s &nbsp;·&nbsp; {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</div>', unsafe_allow_html=True)
 
 time.sleep(REFRESH_SECONDS)
 st.rerun()
