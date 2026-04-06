@@ -72,6 +72,34 @@ class RiskManager:
         return size
 
     # ------------------------------------------------------------------
+    # Global block check (before any API calls)
+    # ------------------------------------------------------------------
+
+    def is_globally_blocked(self) -> Tuple[bool, str]:
+        """Quick check if trading is blocked globally — no API calls should happen if True."""
+        state = self._portfolio.state
+
+        # Drawdown stop
+        if self._drawdown() >= config.DRAWDOWN_STOP_THRESHOLD:
+            return True, f"drawdown_stop ({self._drawdown():.1%})"
+
+        # Daily loss limit (realized only)
+        day_start = state.day_start_bankroll
+        if day_start > 0:
+            open_cost = sum(p.get("cost_basis", 0) for p in state.open_positions.values())
+            realized_bankroll = state.current_bankroll + open_cost
+            daily_loss = (day_start - realized_bankroll) / day_start
+            if daily_loss >= config.DAILY_LOSS_LIMIT_PCT:
+                return True, f"daily_loss_limit ({daily_loss:.1%})"
+
+        # Consecutive loss pause
+        if state.consecutive_losses >= config.CONSECUTIVE_LOSS_PAUSE:
+            if not self._pause_expired():
+                return True, f"consecutive_loss_pause ({state.consecutive_losses} losses)"
+
+        return False, ""
+
+    # ------------------------------------------------------------------
     # Trade gate
     # ------------------------------------------------------------------
 

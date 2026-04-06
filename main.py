@@ -168,85 +168,98 @@ def run() -> None:
         cycle += 1
 
         try:
-            # 1. Scan markets
-            markets = scanner.scan_sports_markets()
+            # Check if trading is globally blocked before doing any API calls
+            trading_blocked, block_reason = risk.is_globally_blocked()
 
-            # 2. Detect arbitrage opportunities
-            opportunities = arbitrage.find_opportunities(markets)
+            if trading_blocked:
+                logger.info(
+                    f"━━ CYCLE {cycle:>4} ━━ IDLE ({block_reason}) | "
+                    f"bankroll=${port.state.current_bankroll:.2f} | "
+                    f"open={len(port.state.open_positions)}"
+                )
+                # Only check resolutions — skip market scan, odds, AI
+                port.check_resolutions()
 
-            # 3. Pre-filter by minimum edge, then cap at top 30 by edge score
-            filtered = sorted(
-                [o for o in opportunities if o.edge_pct >= config.MIN_EDGE_PCT],
-                key=lambda o: o.edge_pct,
-                reverse=True,
-            )[:30]
+            else:
+                # 1. Scan markets
+                markets = scanner.scan_sports_markets()
 
-            logger.info(
-                f"━━ CYCLE {cycle:>4} ━━ "
-                f"markets={len(markets)} | "
-                f"opps={len(opportunities)} | "
-                f"queued={len(filtered)} | "
-                f"bankroll=${port.state.current_bankroll:.2f} | "
-                f"open={len(port.state.open_positions)}"
-            )
+                # 2. Detect arbitrage opportunities
+                opportunities = arbitrage.find_opportunities(markets)
 
-            # 4. AI validation
-            validated = []
-            for opp in filtered:
-                analysis = ai.analyze(opp)
-                if analysis is None:
-                    if not config.ANTHROPIC_API_KEY:
-                        from ai_analyzer import AIAnalysis
-                        analysis = AIAnalysis(
-                            predicted_probability=opp.yes_price,
-                            confidence=1.0,
-                            reasoning="AI disabled",
-                            edge_detected=True,
-                            recommended_side=opp.side,
-                            risk_factors=[],
-                        )
-                    else:
+                # 3. Pre-filter by minimum edge, then cap at top 30 by edge score
+                filtered = sorted(
+                    [o for o in opportunities if o.edge_pct >= config.MIN_EDGE_PCT],
+                    key=lambda o: o.edge_pct,
+                    reverse=True,
+                )[:30]
+
+                logger.info(
+                    f"━━ CYCLE {cycle:>4} ━━ "
+                    f"markets={len(markets)} | "
+                    f"opps={len(opportunities)} | "
+                    f"queued={len(filtered)} | "
+                    f"bankroll=${port.state.current_bankroll:.2f} | "
+                    f"open={len(port.state.open_positions)}"
+                )
+
+                # 4. AI validation
+                validated = []
+                for opp in filtered:
+                    analysis = ai.analyze(opp)
+                    if analysis is None:
+                        if not config.ANTHROPIC_API_KEY:
+                            from ai_analyzer import AIAnalysis
+                            analysis = AIAnalysis(
+                                predicted_probability=opp.yes_price,
+                                confidence=1.0,
+                                reasoning="AI disabled",
+                                edge_detected=True,
+                                recommended_side=opp.side,
+                                risk_factors=[],
+                            )
+                        else:
+                            continue
+
+                    if analysis.is_valid:
+                        validated.append((opp, analysis))
+
+                if validated:
+                    logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
+                else:
+                    logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")
+
+                # 5. Execute
+                with port._lock:
+                    open_market_ids = {
+                        p.get("market_id") for p in port.state.open_positions.values()
+                    }
+
+                trades_placed = 0
+                for opp, analysis in validated:
+                    if opp.market_id in open_market_ids:
+                        logger.debug(f"  skip duplicate: {opp.question[:45]}")
                         continue
 
-                if analysis.is_valid:
-                    validated.append((opp, analysis))
+                    size = risk.get_position_size(comp.current_bet_pct)
+                    allowed, reason = risk.can_trade(opp, size)
 
-            if validated:
-                logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
-            else:
-                logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")
+                    if not allowed:
+                        logger.info(f"  blocked ({reason})")
+                        continue
 
-            # 5. Execute
-            with port._lock:
-                open_market_ids = {
-                    p.get("market_id") for p in port.state.open_positions.values()
-                }
+                    result = exec_.place_order(opp, size)
+                    if result and result.get("success"):
+                        port.record_trade(opp, result, analysis)
+                        comp.update(port.state)
+                        trades_placed += 1
+                        open_market_ids.add(opp.market_id)
 
-            trades_placed = 0
-            for opp, analysis in validated:
-                if opp.market_id in open_market_ids:
-                    logger.debug(f"  skip duplicate: {opp.question[:45]}")
-                    continue
+                if trades_placed:
+                    logger.info(f"  → {trades_placed} trade(s) placed this cycle")
 
-                size = risk.get_position_size(comp.current_bet_pct)
-                allowed, reason = risk.can_trade(opp, size)
-
-                if not allowed:
-                    logger.info(f"  blocked ({reason})")
-                    continue
-
-                result = exec_.place_order(opp, size)
-                if result and result.get("success"):
-                    port.record_trade(opp, result, analysis)
-                    comp.update(port.state)
-                    trades_placed += 1
-                    open_market_ids.add(opp.market_id)
-
-            if trades_placed:
-                logger.info(f"  → {trades_placed} trade(s) placed this cycle")
-
-            # 6. Check resolved markets
-            port.check_resolutions()
+                # 6. Check resolved markets
+                port.check_resolutions()
 
             # 7. Periodic bankroll sync (every ~60 seconds)
             bankroll_sync_counter += 1
