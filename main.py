@@ -138,8 +138,27 @@ def run() -> None:
             logger.warning("Force quit!")
             sys.exit(0)
 
+    def _reload_config(signum, frame):
+        """SIGUSR1 — reload .env without restarting the bot."""
+        try:
+            from dotenv import load_dotenv
+            import importlib
+            load_dotenv(override=True)
+            importlib.reload(config)
+            # Update AI confidence threshold live
+            logger.info(
+                f"Config reloaded — "
+                f"MIN_AI_CONFIDENCE={config.MIN_AI_CONFIDENCE} "
+                f"MIN_EDGE_PCT={config.MIN_EDGE_PCT} "
+                f"BET_SIZE_PCT={config.BET_SIZE_PCT} "
+                f"PAPER_TRADING={config.PAPER_TRADING}"
+            )
+        except Exception as e:
+            logger.error(f"Config reload failed: {e}")
+
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGUSR1, _reload_config)
 
     cycle = 0
     bankroll_sync_counter = 0
@@ -190,7 +209,18 @@ def run() -> None:
             logger.debug(f"[cycle {cycle}] {len(validated)} opportunities passed AI validation")
 
             # 5. Execute
+            # Build set of market_ids already in open positions to avoid duplicates
+            with port._lock:
+                open_market_ids = {
+                    p.get("market_id") for p in port.state.open_positions.values()
+                }
+
             for opp, analysis in validated:
+                # Skip if already have an open position in this market
+                if opp.market_id in open_market_ids:
+                    logger.debug(f"Skipping duplicate: already have position in {opp.question[:50]}")
+                    continue
+
                 size = risk.get_position_size(comp.current_bet_pct)
                 allowed, reason = risk.can_trade(opp, size)
 
