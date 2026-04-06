@@ -90,6 +90,7 @@ SPORTS_KEYWORDS: list = [
     "cricket", "football", "basketball", "baseball", "hockey",
     "match", "game", " win ", " beat ", "score", "tournament",
     "playoff", "championship", "league", "cup", "series",
+    "chess", "fide", "magnus", "grandmaster",
 ]
 
 # ---------------------------------------------------------------------------
