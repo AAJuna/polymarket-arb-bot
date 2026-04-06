@@ -73,6 +73,27 @@ kill -9 $(pgrep -f main.py)
 
 ---
 
+## Fresh Start
+
+```bash
+# Reset portfolio + AI stats + logs, lalu langsung start fresh
+python main.py --fresh-start
+
+# Reset portfolio + AI stats saja, simpan logs lama
+python main.py --fresh-start --keep-logs
+```
+
+Atau lewat `.env`:
+
+- `RESET_STATE_ON_START=true`
+- `RESET_LOGS_ON_START=true` atau `false`
+
+Catatan:
+- Stop bot lama dulu sebelum fresh start supaya file state/log tidak sedang dipakai proses lain.
+- Kalau pakai `RESET_STATE_ON_START=true`, bot akan reset setiap kali startup sampai flag itu dikembalikan ke `false`.
+
+---
+
 ## Update Config Tanpa Restart
 
 ```bash

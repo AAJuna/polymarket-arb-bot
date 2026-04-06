@@ -9,6 +9,7 @@ Environment:
     Set PAPER_TRADING=true (default) for safe testing without real orders.
 """
 
+import argparse
 import signal
 import sys
 import time
@@ -20,11 +21,11 @@ from ai_analyzer import AIAnalyzer
 from compounder import Compounder
 from executor import Executor
 from logger_setup import setup_logging, get_logger
+from maintenance import reset_runtime_state
 from portfolio import Portfolio
 from risk_manager import RiskManager
 from tabulate import tabulate
 
-setup_logging(config.LOG_LEVEL)
 logger = get_logger(__name__)
 
 
@@ -110,6 +111,32 @@ def _print_startup_summary(port: Portfolio) -> None:
         ["Poll interval", f"{config.POLL_INTERVAL}s"],
     ]
     print(tabulate(rows, tablefmt="simple"))
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Polymarket sports arbitrage bot")
+    parser.add_argument(
+        "--fresh-start",
+        action="store_true",
+        help="Delete persisted portfolio, AI stats, and optionally logs before startup",
+    )
+    parser.add_argument(
+        "--keep-logs",
+        action="store_true",
+        help="With --fresh-start, preserve logs/ while clearing saved bot state",
+    )
+    return parser.parse_args(argv)
+
+
+def _log_reset_summary(summary: dict) -> None:
+    removed = len(summary.get("removed") or [])
+    errors = summary.get("errors") or []
+    logger.warning(
+        f"Fresh start reset complete — removed {removed} file(s), "
+        f"clear_logs={summary.get('clear_logs', False)}"
+    )
+    for err in errors:
+        logger.warning(f"Fresh start reset warning: {err}")
 
 
 # ---------------------------------------------------------------------------
@@ -336,5 +363,22 @@ def run() -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+
+    reset_summary = None
+    should_reset = args.fresh_start or config.RESET_STATE_ON_START
+    clear_logs = config.RESET_LOGS_ON_START and not args.keep_logs
+    if should_reset:
+        reset_summary = reset_runtime_state(clear_logs=clear_logs)
+
+    setup_logging(config.LOG_LEVEL)
+
+    if reset_summary is not None:
+        _log_reset_summary(reset_summary)
+
     run()
+
+
+if __name__ == "__main__":
+    main()

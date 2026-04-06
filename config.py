@@ -102,6 +102,8 @@ MAX_CONCURRENT_ORDERS: int = 10
 PORTFOLIO_SAVE_INTERVAL: int = 300        # 5 minutes
 PAPER_TRADING: bool = os.getenv("PAPER_TRADING", "true").lower() == "true"
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
+RESET_STATE_ON_START: bool = os.getenv("RESET_STATE_ON_START", "false").lower() == "true"
+RESET_LOGS_ON_START: bool = os.getenv("RESET_LOGS_ON_START", "true").lower() == "true"
 
 # Default fee rate if CLOB endpoint is unreachable
 DEFAULT_FEE_RATE: float = 0.05
@@ -121,4 +123,6 @@ def validate() -> list[str]:
         issues.append("ODDS_API_KEY not set — odds comparison arbitrage will be disabled")
     if PAPER_TRADING:
         issues.append("PAPER_TRADING=true — no real orders will be placed")
+    if RESET_STATE_ON_START:
+        issues.append("RESET_STATE_ON_START=true — persisted state will be cleared at startup")
     return issues
