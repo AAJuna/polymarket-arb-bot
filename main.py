@@ -206,7 +206,7 @@ def run() -> None:
                 if analysis.is_valid:
                     validated.append((opp, analysis))
 
-            logger.debug(f"[cycle {cycle}] {len(validated)} opportunities passed AI validation")
+            logger.info(f"[cycle {cycle}] {len(validated)} opportunities passed AI validation")
 
             # 5. Execute
             # Build set of market_ids already in open positions to avoid duplicates
@@ -218,7 +218,7 @@ def run() -> None:
             for opp, analysis in validated:
                 # Skip if already have an open position in this market
                 if opp.market_id in open_market_ids:
-                    logger.debug(f"Skipping duplicate: already have position in {opp.question[:50]}")
+                    logger.info(f"Duplicate skip: {opp.question[:50]}")
                     continue
 
                 size = risk.get_position_size(comp.current_bet_pct)

@@ -148,12 +148,12 @@ class AIAnalyzer:
 
             self._cache.set(cache_key, analysis)
 
-            logger.debug(
-                f"AI analysis: {opp.question[:50]} | "
-                f"prob={analysis.predicted_probability:.2f} "
+            logger.info(
+                f"AI: {opp.question[:45]} | "
                 f"conf={analysis.confidence:.2f} "
                 f"side={analysis.recommended_side} "
-                f"edge={analysis.edge_detected}"
+                f"edge={analysis.edge_detected} "
+                f"({'PASS' if analysis.is_valid else 'SKIP'})"
             )
             return analysis
 
