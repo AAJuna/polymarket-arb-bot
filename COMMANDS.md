@@ -1,13 +1,29 @@
 # Polymarket Bot — Command Reference
 
-## Menjalankan Bot
+## Menjalankan Bot (PM2)
 
 ```bash
-# Jalankan di background (tetap jalan saat SSH disconnect)
-nohup python3 main.py &
+# Start
+pm2 start main.py --interpreter python3 --name polymarket-bot
 
-# Jalankan di foreground (untuk debug)
-python3 main.py
+# Stop
+pm2 stop polymarket-bot
+
+# Restart (setelah git pull)
+pm2 restart polymarket-bot
+
+# Reload graceful (finish siklus dulu)
+pm2 reload polymarket-bot
+
+# Status
+pm2 status
+
+# Log real-time
+pm2 logs polymarket-bot
+
+# Auto-start saat VPS reboot (jalankan sekali)
+pm2 startup
+pm2 save
 ```
 
 ---
