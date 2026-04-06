@@ -372,9 +372,9 @@ def pnl_color(v): return "c-green" if v >= 0 else "c-red"
 with c1:
     st.markdown(f'''
     <div class="stat-card">
-      <div class="stat-label">Bankroll</div>
-      <div class="stat-value">${current:.2f}</div>
-      <div class="stat-sub c-muted">${open_cost:.2f} in {len(open_pos)} open positions</div>
+      <div class="stat-label">Total Equity</div>
+      <div class="stat-value">${realized_bankroll:.2f}</div>
+      <div class="stat-sub c-muted">Cash ${current:.2f} + ${open_cost:.2f} in {len(open_pos)} open positions</div>
     </div>''', unsafe_allow_html=True)
 
 with c2:
