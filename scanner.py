@@ -19,6 +19,7 @@ from utils import TTLCache, parse_iso, retry, seconds_until, utcnow
 logger = get_logger(__name__)
 
 GAMMA_MARKETS_URL = f"{config.GAMMA_API_HOST}/markets"
+GAMMA_EVENTS_URL  = f"{config.GAMMA_API_HOST}/events"
 CLOB_FEE_URL = f"{config.POLYMARKET_HOST}/fee-rate"
 
 _market_cache = TTLCache(ttl_seconds=10)
@@ -148,11 +149,17 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
             return None
         end_date = parse_iso(end_date_str)
 
+        # Prefer event slug (used in polymarket.com/event/{slug} URLs)
+        events = raw.get("events") or []
+        event_slug = events[0].get("slug", "") if events else ""
+        market_slug = raw.get("slug", "")
+        slug = event_slug or market_slug
+
         return MarketData(
             market_id=str(raw.get("id", "")),
             condition_id=str(raw.get("conditionId", "")),
             question=raw.get("question", ""),
-            slug=raw.get("slug", ""),
+            slug=slug,
             yes_token_id=yes_id,
             no_token_id=no_id,
             yes_price=yes_price,
@@ -190,6 +197,29 @@ def _fetch_page(offset: int, limit: int = 100) -> list[dict]:
     return resp.json()
 
 
+@retry(max_attempts=3, base_delay=2.0, exceptions=(requests.RequestException,))
+def _fetch_sports_events() -> list[dict]:
+    """Fetch markets from the events endpoint with tag=sports — matches /sports/live page."""
+    markets = []
+    try:
+        resp = _session.get(
+            GAMMA_EVENTS_URL,
+            params={"active": "true", "tag": "sports", "limit": 100, "order": "volume24hr", "ascending": "false"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        events = resp.json()
+        for event in events:
+            event_slug = event.get("slug", "")
+            for m in (event.get("markets") or []):
+                m["events"] = [event]   # inject event so slug is accessible
+                m["_event_slug"] = event_slug
+                markets.append(m)
+    except Exception as e:
+        logger.warning(f"Sports events fetch failed: {e}")
+    return markets
+
+
 def scan_sports_markets() -> list[MarketData]:
     """Scan all active Polymarket sports markets. Results cached for 10 seconds."""
     cached = _market_cache.get("markets")
@@ -214,7 +244,6 @@ def scan_sports_markets() -> list[MarketData]:
 
         raw_markets.extend(page)
 
-        # Stop if last page OR if remaining markets are below volume threshold
         if len(page) < limit:
             break
         last_volume = float(page[-1].get("volume24hr") or 0)
@@ -222,7 +251,17 @@ def scan_sports_markets() -> list[MarketData]:
             break
 
         offset += limit
-        time.sleep(0.2)  # polite pagination
+        time.sleep(0.2)
+
+    # Also fetch from /events?tag=sports (matches /sports/live page)
+    sports_event_markets = _fetch_sports_events()
+
+    # Merge — deduplicate by market id
+    seen_ids = {r.get("id") for r in raw_markets}
+    for m in sports_event_markets:
+        if m.get("id") not in seen_ids:
+            raw_markets.append(m)
+            seen_ids.add(m.get("id"))
 
     # Filter sports only
     sports_raw = [r for r in raw_markets if _is_sports_market(r)]
