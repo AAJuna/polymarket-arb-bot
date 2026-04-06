@@ -200,12 +200,21 @@ def run() -> None:
                 # 2. Detect arbitrage opportunities
                 opportunities = arbitrage.find_opportunities(markets)
 
-                # 3. Pre-filter by minimum edge, then cap at top 30 by edge score
+                # 3. Pre-filter — skip markets already open, apply edge threshold
+                #    Cap at top 5 by edge score to limit AI token spend
+                with port._lock:
+                    open_market_ids_prefilter = {
+                        p.get("market_id") for p in port.state.open_positions.values()
+                    }
                 filtered = sorted(
-                    [o for o in opportunities if o.edge_pct >= config.MIN_EDGE_PCT],
+                    [
+                        o for o in opportunities
+                        if o.edge_pct >= config.MIN_EDGE_PCT
+                        and o.market_id not in open_market_ids_prefilter
+                    ],
                     key=lambda o: o.edge_pct,
                     reverse=True,
-                )[:30]
+                )[:5]  # Only top 5 sent to AI — saves tokens
 
                 logger.info(
                     f"━━ CYCLE {cycle:>4} ━━ "
@@ -243,17 +252,8 @@ def run() -> None:
                     logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")
 
                 # 5. Execute
-                with port._lock:
-                    open_market_ids = {
-                        p.get("market_id") for p in port.state.open_positions.values()
-                    }
-
                 trades_placed = 0
                 for opp, analysis in validated:
-                    if opp.market_id in open_market_ids:
-                        logger.debug(f"  skip duplicate: {opp.question[:45]}")
-                        continue
-
                     size = risk.get_position_size(comp.current_bet_pct)
                     allowed, reason = risk.can_trade(opp, size)
 
