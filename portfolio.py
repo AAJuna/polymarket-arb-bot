@@ -304,11 +304,16 @@ class Portfolio:
     def log_status(self) -> None:
         m = self.compute_metrics()
         logger.info(
-            f"STATUS | bankroll=${self.state.current_bankroll:.2f} | "
-            f"open={len(self.state.open_positions)} | "
-            f"trades={m.get('total_trades', 0)} | "
-            f"win_rate={m.get('win_rate', 0):.1f}% | "
-            f"roi={m.get('roi_pct', 0):+.1f}%"
+            f"┌─ PORTFOLIO ─────────────────────────────────────\n"
+            f"│  Bankroll : ${self.state.current_bankroll:.2f}  "
+            f"(peak ${self.state.peak_bankroll:.2f})\n"
+            f"│  Trades   : {m.get('total_trades', 0)} total | "
+            f"win rate {m.get('win_rate', 0):.1f}%\n"
+            f"│  ROI      : {m.get('roi_pct', 0):+.1f}% | "
+            f"P&L ${m.get('total_pnl', 0):+.2f}\n"
+            f"│  Open pos : {len(self.state.open_positions)} | "
+            f"streak W{self.state.consecutive_wins}/L{self.state.consecutive_losses}\n"
+            f"└─────────────────────────────────────────────────"
         )
 
     # ------------------------------------------------------------------

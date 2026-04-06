@@ -48,8 +48,12 @@ def setup_logging(log_level: str = "INFO") -> None:
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)  # capture everything; handlers filter
 
-    fmt = "%(asctime)s [%(levelname)-8s] %(name)-22s — %(message)s"
-    date_fmt = "%Y-%m-%d %H:%M:%S"
+    # Silence noisy third-party loggers
+    for noisy in ("httpx", "httpcore", "anthropic._base_client", "urllib3", "web3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    fmt = "%(asctime)s [%(levelname)-8s] %(name)-20s — %(message)s"
+    date_fmt = "%H:%M:%S"  # shorter: HH:MM:SS only
 
     # Terminal handler (colored)
     stream_handler = logging.StreamHandler(sys.stdout)

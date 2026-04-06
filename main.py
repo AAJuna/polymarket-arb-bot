@@ -170,7 +170,6 @@ def run() -> None:
         try:
             # 1. Scan markets
             markets = scanner.scan_sports_markets()
-            logger.debug(f"[cycle {cycle}] Scanned {len(markets)} sports markets")
 
             # 2. Detect arbitrage opportunities
             opportunities = arbitrage.find_opportunities(markets)
@@ -181,21 +180,27 @@ def run() -> None:
                 key=lambda o: o.edge_pct,
                 reverse=True,
             )[:30]
-            logger.info(f"[cycle {cycle}] {len(filtered)} top opportunities queued for AI validation")
+
+            logger.info(
+                f"━━ CYCLE {cycle:>4} ━━ "
+                f"markets={len(markets)} | "
+                f"opps={len(opportunities)} | "
+                f"queued={len(filtered)} | "
+                f"bankroll=${port.state.current_bankroll:.2f} | "
+                f"open={len(port.state.open_positions)}"
+            )
 
             # 4. AI validation
             validated = []
             for opp in filtered:
                 analysis = ai.analyze(opp)
                 if analysis is None:
-                    # No AI key or failed → use mechanical edge only if confidence skipped
                     if not config.ANTHROPIC_API_KEY:
-                        # Create a pass-through analysis
                         from ai_analyzer import AIAnalysis
                         analysis = AIAnalysis(
                             predicted_probability=opp.yes_price,
                             confidence=1.0,
-                            reasoning="AI disabled — mechanical edge only",
+                            reasoning="AI disabled",
                             edge_detected=True,
                             recommended_side=opp.side,
                             risk_factors=[],
@@ -206,32 +211,39 @@ def run() -> None:
                 if analysis.is_valid:
                     validated.append((opp, analysis))
 
-            logger.info(f"[cycle {cycle}] {len(validated)} opportunities passed AI validation")
+            if validated:
+                logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
+            else:
+                logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")
 
             # 5. Execute
-            # Build set of market_ids already in open positions to avoid duplicates
             with port._lock:
                 open_market_ids = {
                     p.get("market_id") for p in port.state.open_positions.values()
                 }
 
+            trades_placed = 0
             for opp, analysis in validated:
-                # Skip if already have an open position in this market
                 if opp.market_id in open_market_ids:
-                    logger.info(f"Duplicate skip: {opp.question[:50]}")
+                    logger.debug(f"  skip duplicate: {opp.question[:45]}")
                     continue
 
                 size = risk.get_position_size(comp.current_bet_pct)
                 allowed, reason = risk.can_trade(opp, size)
 
                 if not allowed:
-                    logger.debug(f"Trade blocked ({reason}): {opp.question[:50]}")
+                    logger.info(f"  blocked ({reason})")
                     continue
 
                 result = exec_.place_order(opp, size)
                 if result and result.get("success"):
                     port.record_trade(opp, result, analysis)
                     comp.update(port.state)
+                    trades_placed += 1
+                    open_market_ids.add(opp.market_id)
+
+            if trades_placed:
+                logger.info(f"  → {trades_placed} trade(s) placed this cycle")
 
             # 6. Check resolved markets
             port.check_resolutions()
