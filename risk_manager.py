@@ -99,10 +99,12 @@ class RiskManager:
                 # Pause has expired — log and allow
                 logger.info("Consecutive loss pause expired — resuming trading")
 
-        # Daily loss limit
+        # Daily loss limit — only count realized losses, not open position cost
         day_start = state.day_start_bankroll
         if day_start > 0:
-            daily_loss = (day_start - bankroll) / day_start
+            open_cost = sum(p.get("cost_basis", 0) for p in state.open_positions.values())
+            realized_bankroll = bankroll + open_cost
+            daily_loss = (day_start - realized_bankroll) / day_start
             if daily_loss >= config.DAILY_LOSS_LIMIT_PCT:
                 return False, f"daily_loss_limit ({daily_loss:.1%})"
 

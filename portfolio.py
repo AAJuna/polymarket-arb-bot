@@ -305,7 +305,9 @@ class Portfolio:
         m = self.compute_metrics()
         day_start = self.state.day_start_bankroll
         current = self.state.current_bankroll
-        daily_pnl = current - day_start
+        open_cost = sum(p.get("cost_basis", 0) for p in self.state.open_positions.values())
+        realized_bankroll = current + open_cost
+        daily_pnl = realized_bankroll - day_start
         daily_pct = (daily_pnl / day_start * 100) if day_start > 0 else 0.0
         daily_tag = "WIN" if daily_pnl >= 0 else "LOSS"
         limit_pct = config.DAILY_LOSS_LIMIT_PCT * 100
