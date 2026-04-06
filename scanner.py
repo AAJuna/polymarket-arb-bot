@@ -15,12 +15,13 @@ import requests
 
 import config
 from logger_setup import get_logger
-from utils import TTLCache, parse_iso, retry, seconds_until, utcnow
+from utils import TTLCache, format_time_remaining, parse_iso, retry, seconds_until, utcnow
 
 logger = get_logger(__name__)
 
 GAMMA_MARKETS_URL = f"{config.GAMMA_API_HOST}/markets"
 GAMMA_EVENTS_URL  = f"{config.GAMMA_API_HOST}/events"
+GAMMA_PUBLIC_SEARCH_URL = f"{config.GAMMA_API_HOST}/public-search"
 CLOB_FEE_URL = f"{config.POLYMARKET_HOST}/fee-rate"
 
 _market_cache = TTLCache(ttl_seconds=10)
@@ -55,6 +56,11 @@ class MarketData:
     sports_market_type: str        # e.g. "moneyline", "" if unknown
     fee_rate_yes: float
     fee_rate_no: float
+    fee_rate_bps: int = 0
+    fees_enabled: bool = False
+    order_price_min_tick_size: float = 0.01
+    order_min_size: float = 0.0
+    is_live: bool = False
     active: bool = True
     closed: bool = False
     archived: bool = False
@@ -116,6 +122,17 @@ def _coerce_flag(raw: dict, key: str, default: bool) -> bool:
     return bool(value)
 
 
+def _coerce_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
 def _extract_end_date(raw: dict) -> Optional[datetime]:
     end_date_str = raw.get("endDate") or raw.get("endDateIso") or raw.get("end_date_iso") or ""
     if not end_date_str:
@@ -125,6 +142,18 @@ def _extract_end_date(raw: dict) -> Optional[datetime]:
         return parse_iso(end_date_str)
     except Exception:
         return None
+
+
+def _extract_event_end_date(raw: dict) -> Optional[datetime]:
+    events = raw.get("events") or []
+    end_dates = [date for date in (_extract_end_date(event) for event in events) if date is not None]
+    if not end_dates:
+        return None
+    return min(end_dates)
+
+
+def _extract_effective_end_date(raw: dict) -> Optional[datetime]:
+    return _extract_end_date(raw) or _extract_event_end_date(raw)
 
 
 def _build_market_url(
@@ -153,16 +182,42 @@ def _is_event_open(event: dict) -> bool:
     if bool(event.get("closed")) or bool(event.get("archived")):
         return False
 
-    end_date = _extract_end_date(event)
+    end_date = _extract_effective_end_date(event)
     if end_date is not None and seconds_until(end_date) <= 0:
         return False
 
     return True
 
 
+def _extract_market_fee(raw: dict) -> tuple[float, int]:
+    """Return fee rate as decimal and basis points for a market payload."""
+    if raw.get("feesEnabled") is False:
+        return 0.0, 0
+
+    fee_schedule = raw.get("feeSchedule") or {}
+    if isinstance(fee_schedule, dict):
+        rate = fee_schedule.get("rate")
+        if rate is not None:
+            rate_decimal = _coerce_float(rate, 0.0)
+            return rate_decimal, int(round(rate_decimal * 10_000))
+
+    for key in ("fee_rate", "feeRate", "base_fee", "baseFee"):
+        value = raw.get(key)
+        if value is None:
+            continue
+        numeric = _coerce_float(value, 0.0)
+        if numeric <= 0:
+            continue
+        if numeric > 1:
+            return numeric / 10_000.0, int(round(numeric))
+        return numeric, int(round(numeric * 10_000))
+
+    return config.DEFAULT_FEE_RATE, int(round(config.DEFAULT_FEE_RATE * 10_000))
+
+
 def evaluate_market_status(raw: dict) -> tuple[bool, str]:
     """Return whether a market is still open for trading plus the first failing reason."""
-    end_date = _extract_end_date(raw)
+    end_date = _extract_effective_end_date(raw)
     if end_date is None:
         return False, "missing_end_date"
 
@@ -184,6 +239,46 @@ def evaluate_market_status(raw: dict) -> tuple[bool, str]:
         return False, "event_closed"
 
     return True, "open"
+
+
+def summarize_market_window(raw: dict) -> dict:
+    """Return a compact market window summary from official Gamma fields."""
+    events = raw.get("events") or []
+    event_slug = raw.get("_event_slug") or (events[0].get("slug", "") if events else "")
+    market_slug = raw.get("slug", "")
+    condition_id = str(raw.get("conditionId", "") or "")
+    end_date = _extract_effective_end_date(raw)
+    is_open, reason = evaluate_market_status(raw)
+
+    if end_date is None:
+        ends_in = "Ends unknown"
+        end_date_iso = ""
+        seconds_remaining = None
+    else:
+        remaining = seconds_until(end_date)
+        seconds_remaining = remaining
+        end_date_iso = end_date.isoformat()
+        ends_in = "Ended" if remaining <= 0 else f"Ends in {format_time_remaining(end_date)}"
+
+    return {
+        "market_id": str(raw.get("id", "") or raw.get("conditionId", "") or market_slug or raw.get("question", "")),
+        "condition_id": condition_id,
+        "question": str(raw.get("question", "") or ""),
+        "event_slug": event_slug,
+        "market_slug": market_slug,
+        "market_url": _build_market_url(
+            condition_id=condition_id,
+            event_slug=event_slug,
+            market_slug=market_slug,
+            legacy_slug=market_slug or event_slug,
+        ),
+        "end_date": end_date_iso,
+        "ends_in": ends_in,
+        "seconds_remaining": seconds_remaining,
+        "is_open": is_open,
+        "reason": reason,
+        "raw": raw,
+    }
 
 
 def _is_sports_market(raw: dict) -> bool:
@@ -209,7 +304,7 @@ def _fetch_fee_rate(token_id: str) -> float:
     resp = _session.get(CLOB_FEE_URL, params={"token_id": token_id}, timeout=5)
     resp.raise_for_status()
     data = resp.json()
-    rate = float(data.get("fee_rate", config.DEFAULT_FEE_RATE))
+    rate, _ = _extract_market_fee(data)
     _fee_cache.set(token_id, rate)
     return rate
 
@@ -223,11 +318,12 @@ def _fetch_fee_rates_bulk(markets_raw: list[dict]) -> dict[str, float]:
     """
     rates: dict[str, float] = {}
     for raw in markets_raw:
+        fee_rate, _ = _extract_market_fee(raw)
         token_ids = _parse_list_field(raw.get("clobTokenIds"))
         if token_ids:
-            rates[token_ids[0]] = config.DEFAULT_FEE_RATE
+            rates[token_ids[0]] = fee_rate
         if len(token_ids) > 1:
-            rates[token_ids[1]] = config.DEFAULT_FEE_RATE
+            rates[token_ids[1]] = fee_rate
     return rates
 
 
@@ -244,7 +340,7 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
         yes_price = float(outcome_prices[0]) if len(outcome_prices) > 0 else 0.5
         no_price = float(outcome_prices[1]) if len(outcome_prices) > 1 else 0.5
 
-        end_date = _extract_end_date(raw)
+        end_date = _extract_effective_end_date(raw)
         if end_date is None:
             return None
 
@@ -279,6 +375,11 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
             sports_market_type=raw.get("sportsMarketType") or "",
             fee_rate_yes=fee_rates.get(yes_id, config.DEFAULT_FEE_RATE),
             fee_rate_no=fee_rates.get(no_id, config.DEFAULT_FEE_RATE),
+            fee_rate_bps=_extract_market_fee(raw)[1],
+            fees_enabled=bool(raw.get("feesEnabled", True)),
+            order_price_min_tick_size=_coerce_float(raw.get("orderPriceMinTickSize"), 0.01),
+            order_min_size=_coerce_float(raw.get("orderMinSize"), 0.0),
+            is_live=bool(raw.get("_event_live")) or any(bool(event.get("live")) for event in events),
             active=_coerce_flag(raw, "active", True),
             closed=_coerce_flag(raw, "closed", False),
             archived=_coerce_flag(raw, "archived", False),
@@ -311,32 +412,68 @@ def _fetch_page(offset: int, limit: int = 100) -> list[dict]:
 
 
 @retry(max_attempts=3, base_delay=2.0, exceptions=(requests.RequestException,))
-def _fetch_sports_events() -> list[dict]:
-    """Fetch markets from the events endpoint with tag=sports — matches /sports/live page."""
-    markets = []
-    try:
-        resp = _session.get(
-            GAMMA_EVENTS_URL,
-            params={
-                "active": "true",
-                "closed": "false",
-                "tag": "sports",
-                "limit": 100,
-                "order": "volume24hr",
-                "ascending": "false",
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        events = resp.json()
-        for event in events:
-            event_slug = event.get("slug", "")
-            for m in (event.get("markets") or []):
-                m["events"] = [event]   # inject event so slug is accessible
-                m["_event_slug"] = event_slug
-                markets.append(m)
-    except Exception as e:
-        logger.warning(f"Sports events fetch failed: {e}")
+def _fetch_events_page(offset: int, limit: int = 100, live_only: bool = False) -> list[dict]:
+    params = {
+        "active": "true",
+        "closed": "false",
+        "tag": "sports",
+        "limit": limit,
+        "offset": offset,
+        "order": "volume24hr",
+        "ascending": "false",
+    }
+    if live_only:
+        params["live"] = "true"
+
+    resp = _session.get(GAMMA_EVENTS_URL, params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _flatten_event_markets(events: list[dict], live_only: bool = False) -> list[dict]:
+    markets: list[dict] = []
+    for event in events:
+        event_slug = event.get("slug", "")
+        is_live_event = live_only or bool(event.get("live"))
+        for market in (event.get("markets") or []):
+            enriched_market = dict(market)
+            enriched_market["events"] = [event]
+            enriched_market["_event_slug"] = event_slug
+            enriched_market["_event_live"] = is_live_event
+            markets.append(enriched_market)
+    return markets
+
+
+def _fetch_sports_event_markets(live_only: bool = False) -> list[dict]:
+    """Fetch sports event markets, optionally limited to live events from /sports/live."""
+    markets: list[dict] = []
+    offset = 0
+    limit = 100
+    source_label = "/sports/live" if live_only else "/sports"
+    max_pages = None if live_only else 1
+    pages_fetched = 0
+
+    while True:
+        try:
+            events = _fetch_events_page(offset=offset, limit=limit, live_only=live_only)
+        except Exception as e:
+            logger.warning(f"Sports events fetch failed for {source_label} (offset={offset}): {e}")
+            break
+
+        if not events:
+            break
+
+        markets.extend(_flatten_event_markets(events, live_only=live_only))
+        pages_fetched += 1
+
+        if len(events) < limit:
+            break
+        if max_pages is not None and pages_fetched >= max_pages:
+            break
+
+        offset += limit
+        time.sleep(0.2)
+
     return markets
 
 
@@ -373,13 +510,14 @@ def scan_sports_markets() -> list[MarketData]:
         offset += limit
         time.sleep(0.2)
 
-    # Also fetch from /events?tag=sports (matches /sports/live page)
-    sports_event_markets = _fetch_sports_events()
+    # Enrich with sports event metadata and explicitly include /sports/live markets.
+    sports_event_markets = _fetch_sports_event_markets()
+    live_sports_event_markets = _fetch_sports_event_markets(live_only=True)
 
     # Merge — deduplicate by market id
     raw_by_id = {r.get("id"): r for r in raw_markets}
     seen_ids = set(raw_by_id.keys())
-    for m in sports_event_markets:
+    for m in sports_event_markets + live_sports_event_markets:
         market_id = m.get("id")
         if market_id in seen_ids:
             existing = raw_by_id.get(market_id) or {}
@@ -387,6 +525,8 @@ def scan_sports_markets() -> list[MarketData]:
                 existing["events"] = m.get("events")
             if m.get("_event_slug") and not existing.get("_event_slug"):
                 existing["_event_slug"] = m.get("_event_slug")
+            if m.get("_event_live"):
+                existing["_event_live"] = True
             continue
         if market_id not in seen_ids:
             raw_markets.append(m)
@@ -431,6 +571,10 @@ def scan_sports_markets() -> list[MarketData]:
         if m and m.is_valid:
             markets.append(m)
 
+    live_count = sum(1 for market in markets if market.is_live)
+    if live_count:
+        logger.info(f"Included {live_count} live sports markets from /sports/live")
+
     logger.info(f"Returning {len(markets)} valid sports markets after filtering")
     _market_cache.set("markets", markets)
     return markets
@@ -459,11 +603,81 @@ def get_market_status(condition_id: str) -> dict:
     return {}
 
 
-def verify_market_open(condition_id: str) -> tuple[bool, dict, str]:
-    """Fetch the latest Gamma payload and verify the market is still open."""
-    status = get_market_status(condition_id)
-    if not status:
-        return False, {}, "status_unavailable"
+@retry(max_attempts=3, base_delay=1.0, exceptions=(requests.RequestException,))
+def _public_search(query: str, limit_per_type: int = 10, active_only: bool = True) -> dict:
+    params = {
+        "q": query,
+        "limit_per_type": limit_per_type,
+        "optimized": "true",
+        "search_profiles": "false",
+        "search_tags": "false",
+        "page": 1,
+    }
+    if active_only:
+        params["events_status"] = "active"
+        params["keep_closed_markets"] = 0
 
-    is_open, reason = evaluate_market_status(status)
-    return is_open, status, reason
+    resp = _session.get(GAMMA_PUBLIC_SEARCH_URL, params=params, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def search_market_windows(query: str, limit_per_type: int = 10, active_only: bool = True) -> list[dict]:
+    """Search markets by keyword using official Gamma public-search and summarize expiry."""
+    query = (query or "").strip()
+    if not query:
+        return []
+
+    payload = _public_search(query, limit_per_type=limit_per_type, active_only=active_only)
+    results: list[dict] = []
+    seen_market_ids: set[str] = set()
+
+    for event in payload.get("events") or []:
+        event_slug = event.get("slug", "")
+        for market in event.get("markets") or []:
+            market_id = str(
+                market.get("id", "") or
+                market.get("conditionId", "") or
+                market.get("slug", "") or
+                market.get("question", "")
+            )
+            if not market_id or market_id in seen_market_ids:
+                continue
+            enriched_market = dict(market)
+            enriched_market["events"] = [event]
+            if event_slug and not enriched_market.get("_event_slug"):
+                enriched_market["_event_slug"] = event_slug
+            summary = summarize_market_window(enriched_market)
+            if active_only and not summary["is_open"]:
+                continue
+            results.append(summary)
+            seen_market_ids.add(market_id)
+
+    return results
+
+
+def verify_market_open(condition_id: str, keyword: str = "") -> tuple[bool, dict, str]:
+    """Fetch the latest Gamma payload and verify the market is still open.
+
+    Falls back to official /public-search by keyword only if the direct status lookup misses.
+    """
+    status = get_market_status(condition_id)
+    if status:
+        is_open, reason = evaluate_market_status(status)
+        return is_open, status, reason
+
+    keyword = (keyword or "").strip()
+    if keyword:
+        try:
+            normalized_keyword = _normalize_text(keyword)
+            for match in search_market_windows(keyword, limit_per_type=10, active_only=False):
+                if _normalize_text(str(match.get("question", ""))) == normalized_keyword:
+                    logger.debug(
+                        f"verify_market_open fallback matched via public-search for {condition_id}"
+                    )
+                    raw = match.get("raw") or {}
+                    return bool(match.get("is_open")), raw, str(match.get("reason") or "status_unavailable")
+        except Exception as e:
+            logger.debug(f"public-search fallback failed for {condition_id}: {e}")
+
+    return False, {}, "status_unavailable"

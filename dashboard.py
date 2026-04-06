@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 
 import config
+from utils import format_time_remaining, parse_iso, seconds_until
 
 PORTFOLIO_FILE = Path("data/portfolio.json")
 AI_STATS_FILE  = Path("data/ai_stats.json")
@@ -245,6 +246,19 @@ def fmt_pct(v: float, d: int = 1) -> str:
 
 def fmt_usd(v: float) -> str:
     return f"+${v:.2f}" if v >= 0 else f"-${abs(v):.2f}"
+
+
+def fmt_end_window(value: str) -> str:
+    if not value:
+        return "-"
+    try:
+        end_dt = parse_iso(value)
+    except Exception:
+        return value
+
+    if seconds_until(end_dt) <= 0:
+        return "Ended"
+    return f"Ends in {format_time_remaining(end_dt)}"
 
 def is_paused(data: dict) -> bool:
     p = data.get("pause_until")
@@ -492,6 +506,7 @@ if open_pos:
             "Shares": f"{pos.get('size', 0):.2f}",
             "Cost": f"${pos.get('cost_basis', 0):.2f}",
             "Max P&L": f"+${max_pnl:.2f}" if max_pnl >= 0 else f"-${abs(max_pnl):.2f}",
+            "Ends": fmt_end_window(pos.get("end_date", "")),
             "Opened": opened_dt,
             "Link": url,
         })

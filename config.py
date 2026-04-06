@@ -36,6 +36,9 @@ AI_MODEL: str = os.getenv("AI_MODEL", "claude-sonnet-4-6")
 AI_MAX_TOKENS: int = 512
 AI_CALLS_PER_MINUTE: int = 30
 AI_CACHE_TTL: int = 180  # seconds
+AI_SKIP_CACHE_TTL: int = int(os.getenv("AI_SKIP_CACHE_TTL", "600"))
+AI_MAX_CANDIDATES: int = int(os.getenv("AI_MAX_CANDIDATES", "2"))
+AI_MIN_EDGE_PCT: float = float(os.getenv("AI_MIN_EDGE_PCT", "6.0"))
 
 # ---------------------------------------------------------------------------
 # The Odds API
@@ -61,7 +64,7 @@ ODDS_CACHE_TTL: int = 3600  # seconds (1 hour — conserves free tier quota)
 # Trading parameters
 # ---------------------------------------------------------------------------
 MIN_EDGE_PCT: float = float(os.getenv("MIN_EDGE_PCT", "2.0"))
-MIN_AI_CONFIDENCE: float = float(os.getenv("MIN_AI_CONFIDENCE", "0.70"))
+MIN_AI_CONFIDENCE: float = float(os.getenv("MIN_AI_CONFIDENCE", "0.60"))
 BET_SIZE_PCT: float = float(os.getenv("BET_SIZE_PCT", "2.0"))
 INITIAL_BET_SIZE: float = float(os.getenv("INITIAL_BET_SIZE", "2.0"))
 MAX_BET_SIZE: float = float(os.getenv("MAX_BET_SIZE", "50.0"))
@@ -84,6 +87,10 @@ DAILY_LOSS_LIMIT_PCT: float = 0.25        # -25% of day-start bankroll
 MIN_VOLUME_24H: float = 500.0
 MIN_LIQUIDITY: float = 200.0
 MIN_HOURS_TO_EXPIRY: float = 2.0          # skip markets expiring in < 2 hours
+ENABLE_SAME_MARKET_ARB: bool = os.getenv("ENABLE_SAME_MARKET_ARB", "true").lower() == "true"
+ENABLE_CROSS_MARKET_ARB: bool = os.getenv("ENABLE_CROSS_MARKET_ARB", "false").lower() == "true"
+ENABLE_ODDS_COMPARISON_ARB: bool = os.getenv("ENABLE_ODDS_COMPARISON_ARB", "true").lower() == "true"
+ODDS_COMPARISON_MONEYLINE_ONLY: bool = os.getenv("ODDS_COMPARISON_MONEYLINE_ONLY", "true").lower() == "true"
 SPORTS_KEYWORDS: list = [
     "nba", "nfl", "mlb", "nhl", "ncaa", "soccer", "tennis",
     "mma", "ufc", "boxing", "epl", "champions league", "atp",

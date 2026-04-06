@@ -32,6 +32,39 @@ def seconds_until(dt: datetime) -> float:
     return (dt - utcnow()).total_seconds()
 
 
+def format_time_remaining(dt: datetime) -> str:
+    """Human-friendly remaining time label for market expiry windows."""
+    remaining = seconds_until(dt)
+    if remaining <= 0:
+        return "ended"
+
+    minute = 60
+    hour = 60 * minute
+    day = 24 * hour
+    month = 30 * day
+
+    if remaining < hour:
+        minutes = max(1, int(round(remaining / minute)))
+        suffix = "" if minutes == 1 else "s"
+        return f"{minutes} minute{suffix}"
+
+    if remaining < day:
+        hours = max(1, int(round(remaining / hour)))
+        suffix = "" if hours == 1 else "s"
+        if hours == 1:
+            return "about 1 hour"
+        return f"about {hours} hours"
+
+    if remaining < month:
+        days = max(1, int(round(remaining / day)))
+        suffix = "" if days == 1 else "s"
+        return f"{days} day{suffix}"
+
+    months = max(1, int(round(remaining / month)))
+    suffix = "" if months == 1 else "s"
+    return f"{months} month{suffix}"
+
+
 # ---------------------------------------------------------------------------
 # Retry decorator
 # ---------------------------------------------------------------------------

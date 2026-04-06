@@ -57,9 +57,9 @@ def _fetch_midpoints_batch(token_ids: list[str]) -> dict[str, float]:
             continue
 
         try:
-            resp = _session.get(
+            resp = _session.post(
                 f"{config.POLYMARKET_HOST}/midpoints",
-                params={"token_ids": ",".join(uncached)},
+                json=[{"token_id": token_id} for token_id in uncached],
                 timeout=10,
             )
             resp.raise_for_status()
@@ -69,7 +69,21 @@ def _fetch_midpoints_batch(token_ids: list[str]) -> dict[str, float]:
                 results[token_id] = price
                 _price_cache.set(token_id, price)
         except Exception as e:
-            logger.debug(f"Batch midpoint fetch failed for chunk: {e}")
+            logger.debug(f"Batch midpoint POST failed for chunk: {e}")
+            try:
+                resp = _session.get(
+                    f"{config.POLYMARKET_HOST}/midpoints",
+                    params={"token_ids": ",".join(uncached)},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                for token_id, price_str in data.items():
+                    price = float(price_str)
+                    results[token_id] = price
+                    _price_cache.set(token_id, price)
+            except Exception as fallback_error:
+                logger.debug(f"Batch midpoint fallback GET failed for chunk: {fallback_error}")
 
     return results
 
@@ -311,17 +325,25 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
 # Strategy C — Odds comparison
 # ---------------------------------------------------------------------------
 
+def _is_moneyline_market(market: MarketData) -> bool:
+    market_type = (market.sports_market_type or "").strip().lower()
+    return market_type == "moneyline"
+
+
 def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Opportunity]:
     """
     Compare Polymarket YES price with consensus sportsbook probability.
     If sportsbook thinks team wins 60% but Polymarket prices YES at 50¢ → 10% edge.
     """
-    if not config.ODDS_API_KEY:
+    if not config.ODDS_API_KEY or not config.ENABLE_ODDS_COMPARISON_ARB:
         return []
 
     opps: list[Opportunity] = []
 
     for m in markets:
+        if config.ODDS_COMPARISON_MONEYLINE_ONLY and not _is_moneyline_market(m):
+            continue
+
         ext = data_feeds.get_odds_for_market(m.question, m.end_date)
         if ext is None:
             continue
@@ -336,7 +358,9 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
         away_in_q = away_norm.split()[0] in q_lower if ext.away_team else False
 
         sportsbook_prob: Optional[float] = None
-        if home_in_q and not away_in_q:
+        if "draw" in q_lower:
+            sportsbook_prob = ext.draw_prob
+        elif home_in_q and not away_in_q:
             sportsbook_prob = ext.home_prob
         elif away_in_q and not home_in_q:
             sportsbook_prob = ext.away_prob
@@ -394,8 +418,8 @@ def find_opportunities(markets: list[MarketData]) -> list[Opportunity]:
     if not markets:
         return []
 
-    a_opps = _find_same_market_opportunities(markets)
-    b_opps = _find_cross_market_opportunities(markets)
+    a_opps = _find_same_market_opportunities(markets) if config.ENABLE_SAME_MARKET_ARB else []
+    b_opps = _find_cross_market_opportunities(markets) if config.ENABLE_CROSS_MARKET_ARB else []
     c_opps = _find_odds_comparison_opportunities(markets)
 
     all_opps = a_opps + b_opps + c_opps

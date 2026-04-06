@@ -90,6 +90,13 @@ def startup_checks(
                 port.state.day_start_bankroll = balance
             port.sync_bankroll(balance)
             logger.info(f"  CLOB USDC balance: ${balance:.2f}")
+        account_address = exec_.get_account_address()
+        if account_address:
+            logger.info(f"  Data API reconciliation address: {account_address[:10]}...")
+            port.reconcile_live_account(account_address)
+
+    # Persist a startup snapshot immediately so the dashboard has state to read.
+    port.save()
 
     _print_startup_summary(port)
     logger.info("Startup complete. Entering main loop.\n")
@@ -105,7 +112,10 @@ def _print_startup_summary(port: Portfolio) -> None:
         ["Mode", "PAPER" if config.PAPER_TRADING else "LIVE"],
         ["AI model", config.AI_MODEL],
         ["Min edge", f"{config.MIN_EDGE_PCT:.1f}%"],
+        ["AI queue", config.AI_MAX_CANDIDATES],
+        ["AI min edge", f"{config.AI_MIN_EDGE_PCT:.1f}%"],
         ["Min AI confidence", f"{config.MIN_AI_CONFIDENCE:.0%}"],
+        ["Strategies", f"same={config.ENABLE_SAME_MARKET_ARB} cross={config.ENABLE_CROSS_MARKET_ARB} odds={config.ENABLE_ODDS_COMPARISON_ARB}"],
         ["Bet size", f"{config.BET_SIZE_PCT:.1f}% of bankroll"],
         ["Max bet", f"${config.MAX_BET_SIZE:.2f}"],
         ["Poll interval", f"{config.POLL_INTERVAL}s"],
@@ -151,6 +161,7 @@ def run() -> None:
     risk = RiskManager(port)
 
     startup_checks(port, exec_, ai)
+    live_account_address = exec_.get_account_address() if not config.PAPER_TRADING else None
 
     running = True
     _shutdown_count = [0]
@@ -237,16 +248,16 @@ def run() -> None:
                 filtered = sorted(
                     [
                         o for o in opportunities
-                        if o.edge_pct >= config.MIN_EDGE_PCT
+                        if o.edge_pct >= max(config.MIN_EDGE_PCT, config.AI_MIN_EDGE_PCT)
                         and o.market_id not in open_market_ids
                     ],
                     key=lambda o: o.edge_pct,
                     reverse=True,
-                )[:5]  # Only top 5 sent to AI — saves tokens
+                )[:config.AI_MAX_CANDIDATES]  # Cap AI queue — saves tokens and reduces noise
 
                 verified_candidates = []
                 for opp in filtered:
-                    is_open, _, reason = scanner.verify_market_open(opp.condition_id)
+                    is_open, _, reason = scanner.verify_market_open(opp.condition_id, opp.question)
                     if not is_open:
                         logger.info(
                             f"  skipped closed market {opp.market_id} "
@@ -306,7 +317,7 @@ def run() -> None:
                         logger.info(f"  blocked ({reason})")
                         continue
 
-                    is_open, _, status_reason = scanner.verify_market_open(opp.condition_id)
+                    is_open, _, status_reason = scanner.verify_market_open(opp.condition_id, opp.question)
                     if not is_open:
                         logger.info(
                             f"  blocked (market_{status_reason}) | {opp.question[:50]}"
@@ -333,6 +344,8 @@ def run() -> None:
                 balance = exec_.get_usdc_balance()
                 if balance is not None:
                     port.sync_bankroll(balance)
+                if live_account_address:
+                    port.reconcile_live_account(live_account_address)
 
             # 8. Status log (every ~60 seconds)
             if cycle % max(1, 60 // config.POLL_INTERVAL) == 0:

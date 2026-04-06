@@ -85,6 +85,7 @@ class AIAnalyzer:
         self._client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
         self._rate_limiter = RateLimiter(calls_per_minute=config.AI_CALLS_PER_MINUTE)
         self._cache = TTLCache(ttl_seconds=config.AI_CACHE_TTL)
+        self._skip_cache = TTLCache(ttl_seconds=config.AI_SKIP_CACHE_TTL)
         self._total_calls = 0
         self._total_input_tokens = 0
         self._total_output_tokens = 0
@@ -132,6 +133,10 @@ class AIAnalyzer:
         if cached is not None:
             logger.debug(f"AI cache hit for {opp.market_id}")
             return cached
+        skipped = self._skip_cache.get(cache_key)
+        if skipped is not None:
+            logger.debug(f"AI skip cooldown active for {opp.market_id}")
+            return skipped
 
         self._rate_limiter.wait_if_needed()
 
@@ -189,6 +194,8 @@ class AIAnalyzer:
             self._save_stats()
 
             self._cache.set(cache_key, analysis)
+            if not analysis.is_valid:
+                self._skip_cache.set(cache_key, analysis)
 
             logger.info(
                 f"AI: {opp.question[:45]} | "

@@ -16,6 +16,7 @@ from typing import Optional
 from uuid import uuid4
 
 import config
+import requests
 from logger_setup import get_logger, TRADE_LEVEL
 from utils import utcnow
 
@@ -23,6 +24,8 @@ logger = get_logger(__name__)
 
 DATA_DIR = Path("data")
 PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
+_data_api_session = requests.Session()
+_data_api_session.headers.update({"Accept": "application/json"})
 
 
 def _parse_list_field(value) -> list:
@@ -35,6 +38,13 @@ def _parse_list_field(value) -> list:
         except Exception:
             return []
     return []
+
+
+def _coerce_float(value) -> Optional[float]:
+    try:
+        return float(value)
+    except Exception:
+        return None
 
 
 def _build_market_url(
@@ -84,6 +94,7 @@ class Position:
     event_slug: str = ""
     market_slug: str = ""
     market_url: str = ""
+    end_date: str = ""
 
 
 @dataclass
@@ -307,6 +318,7 @@ class Portfolio:
             event_slug=getattr(opp, "event_slug", ""),
             market_slug=getattr(opp, "market_slug", ""),
             market_url=getattr(opp, "market_url", ""),
+            end_date=opp.end_date.isoformat() if getattr(opp, "end_date", None) else "",
         )
 
         with self._lock:
@@ -321,6 +333,7 @@ class Portfolio:
             f"size={pos.size:.2f} @ ${pos.entry_price:.3f} | "
             f"cost=${pos.cost_basis:.2f} | edge={opp.edge_pct:.1f}%{ai_conf}"
         )
+        self.save()
         return pos
 
     def close_position(self, position_id: str, payout_per_share: float) -> float:
@@ -368,6 +381,7 @@ class Portfolio:
             f"{resolution} | "
             f"pnl=${pnl:+.2f} | bankroll=${self.state.current_bankroll:.2f}"
         )
+        self.save()
         return pnl
 
     # ------------------------------------------------------------------
@@ -430,6 +444,98 @@ class Portfolio:
             self._update_peaks()
         if abs(old - usdc_balance) > 0.01:
             logger.debug(f"Bankroll synced: ${old:.2f} → ${usdc_balance:.2f}")
+
+    def _request_data_api(self, path_candidates: list[str], user_address: str):
+        params = {"user": user_address}
+        last_error = None
+        for path in path_candidates:
+            try:
+                resp = _data_api_session.get(
+                    f"{config.DATA_API_HOST}{path}",
+                    params=params,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                last_error = e
+        if last_error:
+            raise last_error
+        return None
+
+    @staticmethod
+    def _extract_positions(payload) -> list[dict]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            for key in ("data", "positions", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
+
+    @staticmethod
+    def _extract_total_value(payload) -> Optional[float]:
+        if payload is None:
+            return None
+        direct = _coerce_float(payload)
+        if direct is not None:
+            return direct
+        if isinstance(payload, dict):
+            for key in ("value", "totalValue", "total_value", "currentValue", "positionValue"):
+                value = _coerce_float(payload.get(key))
+                if value is not None:
+                    return value
+            nested = payload.get("data")
+            if nested is not None:
+                return Portfolio._extract_total_value(nested)
+        return None
+
+    def reconcile_live_account(self, user_address: str) -> Optional[dict]:
+        """Best-effort Data API snapshot for live trading sanity checks."""
+        if config.PAPER_TRADING or not user_address:
+            return None
+
+        try:
+            positions_payload = self._request_data_api(
+                ["/positions", "/v1/positions"],
+                user_address,
+            )
+            value_payload = self._request_data_api(
+                ["/value", "/v1/value"],
+                user_address,
+            )
+        except Exception as e:
+            logger.warning(f"Data API reconciliation failed for {user_address[:10]}...: {e}")
+            return None
+
+        positions = self._extract_positions(positions_payload)
+        total_value = self._extract_total_value(value_payload)
+        live_open = len(
+            [
+                pos for pos in positions
+                if (_coerce_float(pos.get('size')) or 0.0) > 0
+            ]
+        )
+
+        with self._lock:
+            local_open = len(self.state.open_positions)
+
+        if live_open != local_open:
+            logger.warning(
+                f"Data API mismatch â€” local_open={local_open} vs live_open={live_open}"
+            )
+
+        if total_value is not None:
+            logger.info(
+                f"Data API snapshot â€” live_open={live_open} | "
+                f"position_value=${total_value:.2f}"
+            )
+
+        return {
+            "live_open": live_open,
+            "position_value": total_value,
+        }
 
     # ------------------------------------------------------------------
     # Metrics

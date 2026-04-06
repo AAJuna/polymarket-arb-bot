@@ -6,6 +6,7 @@ Web3 position redemption for settled markets.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import TYPE_CHECKING, Optional
@@ -78,11 +79,76 @@ class Executor:
     # Order placement
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_tick_size(raw_tick_size: float) -> float:
+        allowed_ticks = (0.1, 0.01, 0.001, 0.0001)
+        try:
+            tick_size = float(raw_tick_size)
+        except Exception:
+            return 0.01
+
+        for allowed in allowed_ticks:
+            if abs(tick_size - allowed) < 1e-9:
+                return allowed
+
+        return min(allowed_ticks, key=lambda allowed: abs(allowed - tick_size))
+
+    @staticmethod
+    def _format_tick_size(tick_size: float) -> str:
+        if tick_size >= 0.1:
+            return "0.1"
+        if tick_size >= 0.01:
+            return "0.01"
+        if tick_size >= 0.001:
+            return "0.001"
+        return "0.0001"
+
+    @classmethod
+    def _round_price_up(cls, price: float, tick_size: float) -> float:
+        ticks = math.ceil((max(price, tick_size) - 1e-12) / tick_size)
+        precision = len(cls._format_tick_size(tick_size).split(".")[-1])
+        return round(ticks * tick_size, precision)
+
+    def _build_order_plan(
+        self,
+        opp: "Opportunity",
+        size_dollars: float,
+        best_ask: float,
+    ) -> tuple[Optional[dict], str]:
+        raw_market = getattr(opp, "raw_data", None)
+        tick_size = self._normalize_tick_size(
+            getattr(raw_market, "order_price_min_tick_size", 0.01)
+        )
+        max_price = max(tick_size, round(1.0 - tick_size, 4))
+        if best_ask > max_price:
+            return None, f"ask_above_max_price ({best_ask:.4f} > {max_price:.4f})"
+        exec_price = self._round_price_up(best_ask, tick_size)
+        if exec_price <= 0:
+            return None, "invalid_exec_price"
+
+        shares = round(size_dollars / exec_price, 4) if exec_price > 0 else 0.0
+        if shares <= 0:
+            return None, "size_zero"
+
+        order_min_size = float(getattr(raw_market, "order_min_size", 0.0) or 0.0)
+        if order_min_size > 0 and shares < order_min_size:
+            return None, f"order_min_size ({shares:.4f} < {order_min_size:.4f})"
+
+        return {
+            "shares": shares,
+            "exec_price": exec_price,
+            "fill_cost": round(shares * exec_price, 6),
+            "tick_size": tick_size,
+            "neg_risk": bool(getattr(raw_market, "neg_risk", False)),
+            # Let the official SDK resolve the canonical market fee bps from CLOB.
+            "fee_rate_bps": 0,
+        }, ""
+
     def place_order(self, opp: "Opportunity", size_dollars: float) -> Optional[dict]:
         """Place a BUY order. Returns order result dict or None on failure."""
         import scanner as market_scanner
 
-        is_open, _, reason = market_scanner.verify_market_open(opp.condition_id)
+        is_open, _, reason = market_scanner.verify_market_open(opp.condition_id, opp.question)
         if not is_open:
             logger.info(
                 f"Skipping {opp.market_id}: market not open ({reason}) | "
@@ -91,15 +157,23 @@ class Executor:
             return None
 
         if config.PAPER_TRADING:
-            return self._simulate_order(opp, size_dollars)
+            plan, reason = self._build_order_plan(opp, size_dollars, opp.price)
+            if plan is None:
+                logger.info(f"Skipping {opp.market_id}: {reason}")
+                return None
+            return self._simulate_order(opp, plan)
 
         if self._client is None:
             logger.error("CLOB client not initialised")
             return None
 
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
-            from py_clob_client.order_builder.constants import BUY, SELL
+            from py_clob_client.clob_types import (
+                OrderArgs,
+                OrderType,
+                PartialCreateOrderOptions,
+            )
+            from py_clob_client.order_builder.constants import BUY
 
             # Live price check
             book = self._client.get_order_book(opp.token_id)
@@ -116,18 +190,23 @@ class Executor:
                 )
                 return None
 
-            # Convert dollars to shares; align to tick size (0.01)
-            shares = round(size_dollars / best_ask, 2)
-            exec_price = round(best_ask + 0.01, 2)   # slightly aggressive for faster fill
-            exec_price = min(exec_price, 0.99)        # never above 99 cents
+            plan, reason = self._build_order_plan(opp, size_dollars, best_ask)
+            if plan is None:
+                logger.info(f"Skipping {opp.market_id}: {reason}")
+                return None
 
             order_args = OrderArgs(
                 token_id=opp.token_id,
-                price=exec_price,
-                size=shares,
+                price=plan["exec_price"],
+                size=plan["shares"],
                 side=BUY,
+                fee_rate_bps=plan["fee_rate_bps"],
             )
-            signed = self._client.create_order(order_args)
+            order_options = PartialCreateOrderOptions(
+                tick_size=self._format_tick_size(plan["tick_size"]),
+                neg_risk=True if plan["neg_risk"] else None,
+            )
+            signed = self._client.create_order(order_args, order_options)
             resp = self._client.post_order(signed, OrderType.GTC)
 
             if resp and resp.get("success"):
@@ -136,21 +215,21 @@ class Executor:
                     self._open_orders[order_id] = {
                         "opportunity": opp,
                         "placed_at": utcnow(),
-                        "size": shares,
-                        "price": exec_price,
+                        "size": plan["shares"],
+                        "price": plan["exec_price"],
                         "token_id": opp.token_id,
                     }
                 logger.info(
                     f"Order placed: {order_id[:12]}… | "
                     f"{opp.question[:40]} | {opp.side} | "
-                    f"{shares:.2f} shares @ ${exec_price:.3f}"
+                    f"{plan['shares']:.4f} shares @ ${plan['exec_price']:.4f}"
                 )
                 return {
                     "success": True,
                     "orderID": order_id,
-                    "fill_price": exec_price,
-                    "fill_size": shares,
-                    "fill_cost": size_dollars,
+                    "fill_price": plan["exec_price"],
+                    "fill_size": plan["shares"],
+                    "fill_cost": plan["fill_cost"],
                     "simulated": False,
                 }
             else:
@@ -161,28 +240,28 @@ class Executor:
             logger.error(f"Order placement failed for {opp.market_id}: {e}", exc_info=True)
             return None
 
-    def _simulate_order(self, opp: "Opportunity", size_dollars: float) -> dict:
+    def _simulate_order(self, opp: "Opportunity", plan: dict) -> dict:
         """Paper trade: simulate an immediate fill at current price."""
-        shares = round(size_dollars / opp.price, 4) if opp.price > 0 else 0
         order_id = f"PAPER_{uuid4().hex[:8]}"
         with self._lock:
             self._open_orders[order_id] = {
                 "opportunity": opp,
                 "placed_at": utcnow(),
-                "size": shares,
-                "price": opp.price,
+                "size": plan["shares"],
+                "price": plan["exec_price"],
                 "token_id": opp.token_id,
             }
         logger.debug(
             f"[PAPER] Simulated fill: {opp.question[:40]} | "
-            f"{opp.side} | {shares:.4f} shares @ ${opp.price:.3f} | cost=${size_dollars:.2f}"
+            f"{opp.side} | {plan['shares']:.4f} shares @ ${plan['exec_price']:.4f} | "
+            f"cost=${plan['fill_cost']:.2f}"
         )
         return {
             "success": True,
             "orderID": order_id,
-            "fill_price": opp.price,
-            "fill_size": shares,
-            "fill_cost": size_dollars,
+            "fill_price": plan["exec_price"],
+            "fill_size": plan["shares"],
+            "fill_cost": plan["fill_cost"],
             "simulated": True,
         }
 
@@ -306,6 +385,19 @@ class Executor:
     # ------------------------------------------------------------------
     # Balance query
     # ------------------------------------------------------------------
+
+    def get_account_address(self) -> Optional[str]:
+        """Return the best address to use for live account reconciliation."""
+        if config.SIGNATURE_TYPE == 1 and config.FUNDER_ADDRESS:
+            return config.FUNDER_ADDRESS
+        if self._client is not None:
+            try:
+                return self._client.get_address()
+            except Exception:
+                pass
+        if self._account is not None:
+            return self._account.address
+        return None
 
     def get_usdc_balance(self) -> Optional[float]:
         """Return current USDC balance from CLOB (in dollars)."""
