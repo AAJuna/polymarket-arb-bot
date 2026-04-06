@@ -60,9 +60,11 @@ def is_paused(data: dict) -> bool:
 def daily_loss_pct(data: dict) -> float:
     day_start = data.get("day_start_bankroll", 0)
     current = data.get("current_bankroll", 0)
+    open_cost = sum(p.get("cost_basis", 0) for p in data.get("open_positions", {}).values())
+    realized_bankroll = current + open_cost
     if day_start <= 0:
         return 0.0
-    return (day_start - current) / day_start * 100  # positive = loss
+    return max(0.0, (day_start - realized_bankroll) / day_start * 100)  # positive = loss
 
 
 def drawdown_pct(data: dict) -> float:
@@ -108,14 +110,16 @@ open_pos = data.get("open_positions", {})
 history = data.get("trade_history", [])
 cons_wins = data.get("consecutive_wins", 0)
 cons_losses = data.get("consecutive_losses", 0)
+open_cost = sum(p.get("cost_basis", 0) for p in open_pos.values())
+realized_bankroll = current + open_cost
 
 daily_loss = daily_loss_pct(data)
 dd = drawdown_pct(data)
 limit_pct = config.DAILY_LOSS_LIMIT_PCT * 100
 paused = is_paused(data)
 
-daily_pnl_usd = current - day_start
-total_pnl_usd = current - starting
+daily_pnl_usd = realized_bankroll - day_start
+total_pnl_usd = realized_bankroll - starting
 
 blocked_daily = daily_loss >= limit_pct
 blocked_drawdown = dd >= config.DRAWDOWN_STOP_THRESHOLD * 100
