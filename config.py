@@ -55,7 +55,7 @@ ODDS_SPORTS: list = [
     "tennis_atp_french_open",
     "soccer_uefa_champs_league",
 ]
-ODDS_CACHE_TTL: int = 300  # seconds
+ODDS_CACHE_TTL: int = 3600  # seconds (1 hour — conserves free tier quota)
 
 # ---------------------------------------------------------------------------
 # Trading parameters
