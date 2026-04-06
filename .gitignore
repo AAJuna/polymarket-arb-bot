@@ -1,0 +1,40 @@
+# Credentials — NEVER commit these
+.env
+
+# Claude Code internal
+.claude/
+
+# Original prompt file
+prompt_polymarket_bot.md
+
+# Bot state & logs
+data/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
