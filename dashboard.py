@@ -70,9 +70,11 @@ def daily_loss_pct(data: dict) -> float:
 def drawdown_pct(data: dict) -> float:
     peak = data.get("peak_bankroll", 0)
     current = data.get("current_bankroll", 0)
+    open_cost = sum(p.get("cost_basis", 0) for p in data.get("open_positions", {}).values())
+    realized = current + open_cost
     if peak <= 0:
         return 0.0
-    return (peak - current) / peak * 100  # positive = drawdown
+    return max(0.0, (peak - realized) / peak * 100)  # positive = drawdown
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +148,7 @@ with m1:
     st.metric(
         "Bankroll",
         f"${current:.2f}",
-        delta=f"{fmt_usd(current - starting)} all-time",
+        delta=f"{open_cost:.2f} in {len(open_pos)} positions" if open_cost > 0 else "no open positions",
     )
 
 with m2:
@@ -159,7 +161,7 @@ with m2:
     )
 
 with m3:
-    roi = (current - starting) / starting * 100 if starting > 0 else 0.0
+    roi = (realized_bankroll - starting) / starting * 100 if starting > 0 else 0.0
     st.metric("Total ROI", fmt_pct(roi), delta=fmt_usd(total_pnl_usd))
 
 with m4:
