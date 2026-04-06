@@ -191,17 +191,29 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
         if len(group) < 2:
             continue
 
+        # Skip multi-outcome events (elections, award races) where we only see
+        # a partial subset of candidates — their sum will always look low.
+        # Real cross-market arb applies to binary/ternary events (2-3 outcomes).
+        if len(group) > 4:
+            continue
+
+        # Skip if any market has YES price < 0.05 — long shots in big fields,
+        # not genuine mispricing.
+        if any(m.yes_price < 0.05 for m in group):
+            continue
+
         total_yes_prob = sum(m.yes_price for m in group)
 
-        # Sum should be ~1.0 for a complete event (e.g., home win + away win + draw)
-        # If sum < 0.95, the market is "leaving money on the table"
-        if total_yes_prob >= 0.95:
+        # Sum should be ~1.0 for a complete binary/ternary event.
+        # If sum < 0.60, we're almost certainly missing outcomes — skip.
+        if total_yes_prob < 0.60 or total_yes_prob >= 0.95:
             continue
 
         gap = 1.0 - total_yes_prob
         edge_pct = gap / total_yes_prob * 100
 
-        if edge_pct < config.MIN_EDGE_PCT:
+        # Cap at 50% — anything higher is a data artifact, not real arb.
+        if edge_pct < config.MIN_EDGE_PCT or edge_pct > 50.0:
             continue
 
         # BUY the cheapest YES token (most underpriced)
