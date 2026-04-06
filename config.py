@@ -76,7 +76,7 @@ DRAWDOWN_STOP_THRESHOLD: float = 0.40     # -40% from peak → full stop
 CONSECUTIVE_LOSS_REDUCE: int = 5          # halve bet size
 CONSECUTIVE_LOSS_PAUSE: int = 10          # pause trading
 PAUSE_DURATION_MINUTES: int = 30
-DAILY_LOSS_LIMIT_PCT: float = 0.15        # -15% of day-start bankroll
+DAILY_LOSS_LIMIT_PCT: float = 0.25        # -25% of day-start bankroll
 
 # ---------------------------------------------------------------------------
 # Market filters
