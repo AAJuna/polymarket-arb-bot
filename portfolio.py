@@ -47,6 +47,7 @@ class Position:
     pnl: Optional[float] = None
     closed_at: Optional[str] = None
     simulated: bool = False
+    slug: str = ""
 
 
 @dataclass
@@ -157,6 +158,7 @@ class Portfolio:
             status="open",
             order_id=order_result.get("orderID", ""),
             simulated=bool(order_result.get("simulated", False)),
+            slug=getattr(opp, "slug", ""),
         )
 
         with self._lock:

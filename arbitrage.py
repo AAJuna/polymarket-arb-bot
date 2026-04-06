@@ -96,6 +96,7 @@ class Opportunity:
     external_odds: Optional[ExternalOdds] = None
     paired_token_id: Optional[str] = None   # for same_market: the other side
     created_at: datetime = field(default_factory=utcnow)
+    slug: str = ""
 
     def __str__(self):
         return (
@@ -195,6 +196,7 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
             end_date=m.end_date,
             raw_data=m,
             paired_token_id=m.no_token_id,
+            slug=m.slug,
         ))
         opps.append(Opportunity(
             type="same_market",
@@ -211,6 +213,7 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
             end_date=m.end_date,
             raw_data=m,
             paired_token_id=m.yes_token_id,
+            slug=m.slug,
         ))
 
     return opps
@@ -286,6 +289,7 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
             question=cheapest.question,
             end_date=cheapest.end_date,
             raw_data=cheapest,
+            slug=cheapest.slug,
         ))
 
     return opps
@@ -360,6 +364,7 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             end_date=m.end_date,
             raw_data=m,
             external_odds=ext,
+            slug=m.slug,
         ))
 
     return opps

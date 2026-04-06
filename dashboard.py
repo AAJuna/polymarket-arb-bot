@@ -460,6 +460,8 @@ if open_pos:
         except Exception:
             opened_dt = opened
         unrealized = pos.get("size", 0) - pos.get("cost_basis", 0)
+        slug = pos.get("slug", "")
+        url = f"https://polymarket.com/event/{slug}" if slug else f"https://polymarket.com/markets?conditionId={pos.get('condition_id','')}"
         rows.append({
             "Market": pos.get("question", "")[:55],
             "Side": pos.get("side", ""),
@@ -468,10 +470,17 @@ if open_pos:
             "Cost": f"${pos.get('cost_basis', 0):.2f}",
             "Unrealized P&L": f"+${unrealized:.2f}" if unrealized >= 0 else f"-${abs(unrealized):.2f}",
             "Opened": opened_dt,
-            "Sim": "✓" if pos.get("simulated") else "●",
+            "Link": url,
         })
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Link": st.column_config.LinkColumn("Link", display_text="↗ View"),
+        },
+    )
 else:
     st.markdown('<div style="color:#6c7086;font-size:0.8rem;padding:12px 0">No open positions</div>', unsafe_allow_html=True)
 
