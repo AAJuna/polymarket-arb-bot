@@ -84,7 +84,7 @@ class Opportunity:
     market_id: str
     condition_id: str
     token_id: str
-    side: str                  # "BUY" | "SELL"
+    side: str                  # "YES" | "NO"
     price: float               # target execution price
     edge_pct: float
     confidence_source: str
@@ -97,6 +97,9 @@ class Opportunity:
     paired_token_id: Optional[str] = None   # for same_market: the other side
     created_at: datetime = field(default_factory=utcnow)
     slug: str = ""
+    event_slug: str = ""
+    market_slug: str = ""
+    market_url: str = ""
 
     def __str__(self):
         return (
@@ -186,7 +189,7 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
             market_id=m.market_id,
             condition_id=m.condition_id,
             token_id=m.yes_token_id,
-            side="BUY",
+            side="YES",
             price=ask_yes,
             edge_pct=edge_pct,
             confidence_source="mispricing",
@@ -197,13 +200,16 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
             raw_data=m,
             paired_token_id=m.no_token_id,
             slug=m.slug,
+            event_slug=m.event_slug,
+            market_slug=m.market_slug,
+            market_url=m.market_url,
         ))
         opps.append(Opportunity(
             type="same_market",
             market_id=m.market_id,
             condition_id=m.condition_id,
             token_id=m.no_token_id,
-            side="BUY",
+            side="NO",
             price=ask_no,
             edge_pct=edge_pct,
             confidence_source="mispricing",
@@ -214,6 +220,9 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
             raw_data=m,
             paired_token_id=m.yes_token_id,
             slug=m.slug,
+            event_slug=m.event_slug,
+            market_slug=m.market_slug,
+            market_url=m.market_url,
         ))
 
     return opps
@@ -280,7 +289,7 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
             market_id=cheapest.market_id,
             condition_id=cheapest.condition_id,
             token_id=cheapest.yes_token_id,
-            side="BUY",
+            side="YES",
             price=cheapest.yes_price,
             edge_pct=edge_pct,
             confidence_source="cross_market",
@@ -290,6 +299,9 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
             end_date=cheapest.end_date,
             raw_data=cheapest,
             slug=cheapest.slug,
+            event_slug=cheapest.event_slug,
+            market_slug=cheapest.market_slug,
+            market_url=cheapest.market_url,
         ))
 
     return opps
@@ -354,7 +366,7 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             market_id=m.market_id,
             condition_id=m.condition_id,
             token_id=m.yes_token_id,
-            side="BUY",
+            side="YES",
             price=m.yes_price,
             edge_pct=edge_pct,
             confidence_source="odds_comparison",
@@ -365,6 +377,9 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             raw_data=m,
             external_odds=ext,
             slug=m.slug,
+            event_slug=m.event_slug,
+            market_slug=m.market_slug,
+            market_url=m.market_url,
         ))
 
     return opps

@@ -41,6 +41,9 @@ class MarketData:
     condition_id: str
     question: str
     slug: str
+    event_slug: str
+    market_slug: str
+    market_url: str
     yes_token_id: str
     no_token_id: str
     yes_price: float
@@ -122,6 +125,26 @@ def _extract_end_date(raw: dict) -> Optional[datetime]:
         return parse_iso(end_date_str)
     except Exception:
         return None
+
+
+def _build_market_url(
+    condition_id: str,
+    event_slug: str = "",
+    market_slug: str = "",
+    legacy_slug: str = "",
+) -> str:
+    if event_slug.endswith("-more-markets"):
+        base_event_slug = event_slug[: -len("-more-markets")]
+        if not market_slug or market_slug.startswith(base_event_slug):
+            event_slug = base_event_slug
+
+    if event_slug and market_slug:
+        return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+    if legacy_slug:
+        return f"https://polymarket.com/event/{legacy_slug}"
+    if condition_id:
+        return f"https://polymarket.com/predictions?conditionId={condition_id}"
+    return "https://polymarket.com/predictions"
 
 
 def _is_event_open(event: dict) -> bool:
@@ -225,17 +248,26 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
         if end_date is None:
             return None
 
-        # Prefer event slug (used in polymarket.com/event/{slug} URLs)
+        # Prefer explicit event + market slugs for direct market URLs.
         events = raw.get("events") or []
-        event_slug = events[0].get("slug", "") if events else ""
+        event_slug = raw.get("_event_slug") or (events[0].get("slug", "") if events else "")
         market_slug = raw.get("slug", "")
-        slug = event_slug or market_slug
+        slug = market_slug or event_slug
+        market_url = _build_market_url(
+            condition_id=str(raw.get("conditionId", "")),
+            event_slug=event_slug,
+            market_slug=market_slug,
+            legacy_slug=slug,
+        )
 
         return MarketData(
             market_id=str(raw.get("id", "")),
             condition_id=str(raw.get("conditionId", "")),
             question=raw.get("question", ""),
             slug=slug,
+            event_slug=event_slug,
+            market_slug=market_slug,
+            market_url=market_url,
             yes_token_id=yes_id,
             no_token_id=no_id,
             yes_price=yes_price,
@@ -345,11 +377,21 @@ def scan_sports_markets() -> list[MarketData]:
     sports_event_markets = _fetch_sports_events()
 
     # Merge — deduplicate by market id
-    seen_ids = {r.get("id") for r in raw_markets}
+    raw_by_id = {r.get("id"): r for r in raw_markets}
+    seen_ids = set(raw_by_id.keys())
     for m in sports_event_markets:
-        if m.get("id") not in seen_ids:
+        market_id = m.get("id")
+        if market_id in seen_ids:
+            existing = raw_by_id.get(market_id) or {}
+            if m.get("events"):
+                existing["events"] = m.get("events")
+            if m.get("_event_slug") and not existing.get("_event_slug"):
+                existing["_event_slug"] = m.get("_event_slug")
+            continue
+        if market_id not in seen_ids:
             raw_markets.append(m)
-            seen_ids.add(m.get("id"))
+            raw_by_id[market_id] = m
+            seen_ids.add(market_id)
 
     # Filter sports only
     sports_raw = [r for r in raw_markets if _is_sports_market(r)]

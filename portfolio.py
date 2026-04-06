@@ -25,6 +25,38 @@ DATA_DIR = Path("data")
 PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
 
 
+def _parse_list_field(value) -> list:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    return []
+
+
+def _build_market_url(
+    condition_id: str,
+    event_slug: str = "",
+    market_slug: str = "",
+    legacy_slug: str = "",
+) -> str:
+    if event_slug.endswith("-more-markets"):
+        base_event_slug = event_slug[: -len("-more-markets")]
+        if not market_slug or market_slug.startswith(base_event_slug):
+            event_slug = base_event_slug
+
+    if event_slug and market_slug:
+        return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+    if legacy_slug:
+        return f"https://polymarket.com/event/{legacy_slug}"
+    if condition_id:
+        return f"https://polymarket.com/predictions?conditionId={condition_id}"
+    return "https://polymarket.com/predictions"
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -43,11 +75,15 @@ class Position:
     opened_at: str              # ISO string
     status: str                 # "open" | "filled" | "resolved" | "cancelled"
     order_id: str
+    action: str = "BUY"         # "BUY"
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
     closed_at: Optional[str] = None
     simulated: bool = False
     slug: str = ""
+    event_slug: str = ""
+    market_slug: str = ""
+    market_url: str = ""
 
 
 @dataclass
@@ -99,16 +135,124 @@ class Portfolio:
                     k: v for k, v in data.items()
                     if k in PortfolioState.__dataclass_fields__
                 })
+            migrated = self._normalize_loaded_positions()
             logger.info(
                 f"Portfolio loaded: bankroll=${self.state.current_bankroll:.2f} "
                 f"trades={self.state.total_trades}"
             )
             self._check_day_reset()
+            if migrated:
+                self.save()
             return True
         except Exception as e:
             logger.error(f"Portfolio file corrupted: {e} — starting fresh")
             self._init_fresh()
             return False
+
+    def _normalize_loaded_positions(self) -> bool:
+        """Migrate persisted positions so stored trade data remains correct."""
+        import scanner as sc
+
+        changed = False
+        status_cache: dict[str, dict] = {}
+
+        def get_status(condition_id: str) -> dict:
+            if condition_id not in status_cache:
+                status_cache[condition_id] = sc.get_market_status(condition_id) if condition_id else {}
+            return status_cache[condition_id]
+
+        with self._lock:
+            for key, pos in list(self.state.open_positions.items()):
+                updated, pos_changed = self._normalize_position_dict(pos, get_status)
+                if pos_changed:
+                    self.state.open_positions[key] = updated
+                    changed = True
+
+            for idx, pos in enumerate(list(self.state.trade_history)):
+                updated, pos_changed = self._normalize_position_dict(pos, get_status)
+                if pos_changed:
+                    self.state.trade_history[idx] = updated
+                    changed = True
+
+        return changed
+
+    def _normalize_position_dict(self, pos: dict, get_status) -> tuple[dict, bool]:
+        updated = dict(pos)
+        changed = False
+
+        condition_id = str(updated.get("condition_id", "") or "")
+        token_id = str(updated.get("token_id", "") or "")
+        legacy_side = str(updated.get("side", "") or "").upper()
+        action = str(updated.get("action", "") or "").upper()
+
+        needs_status = (
+            legacy_side not in {"YES", "NO"}
+            or not updated.get("event_slug")
+            or not updated.get("market_slug")
+            or not updated.get("market_url")
+        )
+        market_status = get_status(condition_id) if needs_status else {}
+
+        if legacy_side in {"BUY", "SELL"}:
+            inferred_side = self._infer_outcome_side(token_id, market_status)
+            if inferred_side and updated.get("side") != inferred_side:
+                updated["side"] = inferred_side
+                changed = True
+            if not action:
+                updated["action"] = legacy_side
+                changed = True
+        elif not action:
+            updated["action"] = "BUY"
+            changed = True
+
+        event_slug = str(updated.get("event_slug", "") or "")
+        market_slug = str(updated.get("market_slug", "") or "")
+        legacy_slug = str(updated.get("slug", "") or "")
+
+        if market_status:
+            events = market_status.get("events") or []
+
+            if not event_slug:
+                event_slug = str(
+                    market_status.get("_event_slug") or
+                    (events[0].get("slug", "") if events else "")
+                )
+                if event_slug:
+                    updated["event_slug"] = event_slug
+                    changed = True
+
+            if not market_slug:
+                market_slug = str(market_status.get("slug", "") or "")
+                if market_slug:
+                    updated["market_slug"] = market_slug
+                    changed = True
+
+            if not legacy_slug and market_slug:
+                updated["slug"] = market_slug
+                legacy_slug = market_slug
+                changed = True
+
+        market_url = _build_market_url(
+            condition_id=condition_id,
+            event_slug=event_slug,
+            market_slug=market_slug,
+            legacy_slug=legacy_slug,
+        )
+        if updated.get("market_url") != market_url:
+            updated["market_url"] = market_url
+            changed = True
+
+        return updated, changed
+
+    @staticmethod
+    def _infer_outcome_side(token_id: str, market_status: dict) -> str:
+        token_ids = _parse_list_field(market_status.get("clobTokenIds"))
+        if len(token_ids) >= 2:
+            if token_id == str(token_ids[0]):
+                return "YES"
+            if token_id == str(token_ids[1]):
+                return "NO"
+        return ""
 
     def _init_fresh(self):
         with self._lock:
@@ -150,6 +294,7 @@ class Portfolio:
             condition_id=opp.condition_id,
             token_id=opp.token_id,
             side=opp.side,
+            action="BUY",
             question=opp.question,
             entry_price=float(order_result.get("fill_price", opp.price)),
             size=float(order_result.get("fill_size", 0)),
@@ -158,7 +303,10 @@ class Portfolio:
             status="open",
             order_id=order_result.get("orderID", ""),
             simulated=bool(order_result.get("simulated", False)),
-            slug=getattr(opp, "slug", ""),
+            slug=getattr(opp, "market_slug", "") or getattr(opp, "slug", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            market_slug=getattr(opp, "market_slug", ""),
+            market_url=getattr(opp, "market_url", ""),
         )
 
         with self._lock:
@@ -175,21 +323,18 @@ class Portfolio:
         )
         return pos
 
-    def close_position(self, position_id: str, exit_price: float, outcome_won: bool) -> float:
-        """Mark a position as resolved and compute P&L."""
+    def close_position(self, position_id: str, payout_per_share: float) -> float:
+        """Mark a position as resolved and compute P&L from final payout per share."""
         with self._lock:
             pos_dict = self.state.open_positions.get(position_id)
             if not pos_dict:
                 return 0.0
 
             pos = Position(**pos_dict)
-            if outcome_won:
-                # Each winning share redeems for $1.00
-                pnl = pos.size - pos.cost_basis
-            else:
-                pnl = -pos.cost_basis
+            redemption_value = pos.size * payout_per_share
+            pnl = redemption_value - pos.cost_basis
 
-            pos.exit_price = exit_price
+            pos.exit_price = payout_per_share
             pos.pnl = pnl
             pos.closed_at = utcnow().isoformat()
             pos.status = "resolved"
@@ -197,7 +342,7 @@ class Portfolio:
             del self.state.open_positions[position_id]
             self.state.trade_history.append(asdict(pos))
 
-            self.state.current_bankroll += pos.size if outcome_won else 0.0
+            self.state.current_bankroll += redemption_value
             self.state.total_trades += 1
 
             if pnl > 0:
@@ -210,10 +355,17 @@ class Portfolio:
 
             self._update_peaks()
 
+        if payout_per_share >= 0.99:
+            resolution = "WON"
+        elif payout_per_share <= 0.01:
+            resolution = "LOST"
+        else:
+            resolution = f"SETTLED @{payout_per_share:.2f}"
+
         logger.log(
             TRADE_LEVEL,
             f"TRADE CLOSE | {pos.question[:50]} | "
-            f"{'WON' if outcome_won else 'LOST'} | "
+            f"{resolution} | "
             f"pnl=${pnl:+.2f} | bankroll=${self.state.current_bankroll:.2f}"
         )
         return pnl
@@ -241,18 +393,28 @@ class Portfolio:
                 if not market_status:
                     continue
 
-                resolved = bool(market_status.get("resolved"))
                 closed = bool(market_status.get("closed"))
+                outcome_prices_raw = _parse_list_field(market_status.get("outcomePrices"))
+                outcome_prices = []
+                for value in outcome_prices_raw:
+                    try:
+                        outcome_prices.append(float(value))
+                    except Exception:
+                        outcome_prices.append(0.0)
 
-                if resolved and closed:
-                    # Determine winner
-                    outcome_prices = market_status.get("outcomePrices") or ["0.5", "0.5"]
-                    yes_resolved = float(outcome_prices[0]) >= 0.99
+                resolved = bool(market_status.get("resolved"))
+                if not resolved and closed and len(outcome_prices) >= 2:
+                    yes_payout = outcome_prices[0]
+                    no_payout = outcome_prices[1]
+                    resolved = (
+                        yes_payout >= 0.99
+                        or no_payout >= 0.99
+                        or (abs(yes_payout - 0.5) <= 0.01 and abs(no_payout - 0.5) <= 0.01)
+                    )
 
-                    outcome_won = (pos.side == "YES" and yes_resolved) or \
-                                  (pos.side == "NO" and not yes_resolved)
-
-                    self.close_position(pid, 1.0 if outcome_won else 0.0, outcome_won)
+                if resolved and closed and len(outcome_prices) >= 2:
+                    payout_per_share = outcome_prices[0] if pos.side == "YES" else outcome_prices[1]
+                    self.close_position(pid, payout_per_share)
             except Exception as e:
                 logger.warning(f"Resolution check failed for {pid}: {e}")
 

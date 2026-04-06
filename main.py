@@ -158,7 +158,8 @@ def run() -> None:
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGUSR1, _reload_config)
+    if hasattr(signal, "SIGUSR1"):
+        signal.signal(signal.SIGUSR1, _reload_config)
 
     cycle = 0
     bankroll_sync_counter = 0
@@ -255,8 +256,13 @@ def run() -> None:
                         else:
                             continue
 
-                    if analysis.is_valid:
+                    if analysis.is_valid and analysis.recommended_side == opp.side:
                         validated.append((opp, analysis))
+                    elif analysis.is_valid:
+                        logger.info(
+                            f"  skipped AI side mismatch for {opp.market_id} "
+                            f"(opp={opp.side}, ai={analysis.recommended_side})"
+                        )
 
                 if validated:
                     logger.info(f"  ✓ {len(validated)} passed AI validation → executing")

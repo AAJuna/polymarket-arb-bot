@@ -18,6 +18,30 @@ PORTFOLIO_FILE = Path("data/portfolio.json")
 AI_STATS_FILE  = Path("data/ai_stats.json")
 REFRESH_SECONDS = 10
 
+
+def build_market_url(pos: dict) -> str:
+    market_url = pos.get("market_url", "")
+    if market_url:
+        return market_url
+
+    event_slug = pos.get("event_slug", "")
+    market_slug = pos.get("market_slug", "")
+    legacy_slug = pos.get("slug", "")
+    condition_id = pos.get("condition_id", "")
+
+    if event_slug.endswith("-more-markets"):
+        base_event_slug = event_slug[: -len("-more-markets")]
+        if not market_slug or market_slug.startswith(base_event_slug):
+            event_slug = base_event_slug
+
+    if event_slug and market_slug:
+        return f"https://polymarket.com/event/{event_slug}/{market_slug}"
+    if legacy_slug:
+        return f"https://polymarket.com/event/{legacy_slug}"
+    if condition_id:
+        return f"https://polymarket.com/predictions?conditionId={condition_id}"
+    return "https://polymarket.com/predictions"
+
 st.set_page_config(
     page_title="MeQ0L15",
     page_icon="⚔️",
@@ -459,16 +483,15 @@ if open_pos:
             opened_dt = datetime.fromisoformat(opened).strftime("%m-%d %H:%M")
         except Exception:
             opened_dt = opened
-        unrealized = pos.get("size", 0) - pos.get("cost_basis", 0)
-        slug = pos.get("slug", "")
-        url = f"https://polymarket.com/event/{slug}" if slug else f"https://polymarket.com/markets?conditionId={pos.get('condition_id','')}"
+        max_pnl = pos.get("size", 0) - pos.get("cost_basis", 0)
+        url = build_market_url(pos)
         rows.append({
             "Market": pos.get("question", "")[:55],
             "Side": pos.get("side", ""),
             "Entry": f"{pos.get('entry_price', 0):.3f}",
             "Shares": f"{pos.get('size', 0):.2f}",
             "Cost": f"${pos.get('cost_basis', 0):.2f}",
-            "Unrealized P&L": f"+${unrealized:.2f}" if unrealized >= 0 else f"-${abs(unrealized):.2f}",
+            "Max P&L": f"+${max_pnl:.2f}" if max_pnl >= 0 else f"-${abs(max_pnl):.2f}",
             "Opened": opened_dt,
             "Link": url,
         })
@@ -496,24 +519,37 @@ if history:
     rows = []
     for pos in reversed(history):
         pnl = pos.get("pnl") or 0.0
-        result = "WIN ▲" if pnl > 0 else "LOSS ▼"
+        exit_price = pos.get("exit_price")
+        if exit_price is not None and 0.01 < float(exit_price) < 0.99:
+            result = f"SETTLED @{float(exit_price):.2f}"
+        else:
+            result = "WIN ▲" if pnl > 0 else "LOSS ▼"
         closed = pos.get("closed_at", "")
         try:
             closed_dt = datetime.fromisoformat(closed).strftime("%m-%d %H:%M")
         except Exception:
             closed_dt = closed
+        url = build_market_url(pos)
         rows.append({
             "Result": result,
             "Market": pos.get("question", "")[:55],
             "Side": pos.get("side", ""),
             "Entry": f"{pos.get('entry_price', 0):.3f}",
-            "Exit": f"{pos.get('exit_price', 0):.3f}" if pos.get("exit_price") else "—",
+            "Exit": f"{float(exit_price):.3f}" if exit_price is not None else "—",
             "Cost": f"${pos.get('cost_basis', 0):.2f}",
             "P&L": f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}",
             "Closed": closed_dt,
+            "Link": url,
         })
     df_hist = pd.DataFrame(rows)
-    st.dataframe(df_hist, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df_hist,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Link": st.column_config.LinkColumn("Link", display_text="↗ View"),
+        },
+    )
 else:
     st.markdown('<div style="color:#6c7086;font-size:0.8rem;padding:12px 0">No closed trades yet</div>', unsafe_allow_html=True)
 
