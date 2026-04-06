@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import anthropic
@@ -14,6 +15,8 @@ import anthropic
 import config
 from logger_setup import get_logger
 from utils import RateLimiter, TTLCache
+
+AI_STATS_FILE = Path("data/ai_stats.json")
 
 if TYPE_CHECKING:
     from arbitrage import Opportunity
@@ -83,7 +86,40 @@ class AIAnalyzer:
         self._rate_limiter = RateLimiter(calls_per_minute=config.AI_CALLS_PER_MINUTE)
         self._cache = TTLCache(ttl_seconds=config.AI_CACHE_TTL)
         self._total_calls = 0
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
         self._estimated_cost_usd = 0.0
+        self._load_stats()
+
+    def _load_stats(self) -> None:
+        """Load persisted stats from disk."""
+        if not AI_STATS_FILE.exists():
+            return
+        try:
+            with open(AI_STATS_FILE, "r") as f:
+                s = json.load(f)
+            self._total_calls = s.get("total_calls", 0)
+            self._total_input_tokens = s.get("total_input_tokens", 0)
+            self._total_output_tokens = s.get("total_output_tokens", 0)
+            self._estimated_cost_usd = s.get("estimated_cost_usd", 0.0)
+        except Exception:
+            pass
+
+    def _save_stats(self) -> None:
+        """Persist stats to disk."""
+        try:
+            AI_STATS_FILE.parent.mkdir(exist_ok=True)
+            with open(AI_STATS_FILE, "w") as f:
+                json.dump({
+                    "total_calls": self._total_calls,
+                    "total_input_tokens": self._total_input_tokens,
+                    "total_output_tokens": self._total_output_tokens,
+                    "estimated_cost_usd": self._estimated_cost_usd,
+                    "model": config.AI_MODEL,
+                    "updated_at": __import__("datetime").datetime.utcnow().isoformat(),
+                }, f, indent=2)
+        except Exception:
+            pass
 
     def analyze(self, opp: "Opportunity") -> Optional[AIAnalysis]:
         """Analyze an opportunity. Returns None on failure or if API key missing."""
@@ -141,10 +177,16 @@ class AIAnalyzer:
                 risk_factors=list(tool_result.get("risk_factors") or []),
             )
 
-            # Estimate cost: ~200 input + ~100 output tokens per call
+            # Actual token usage from response
             # claude-sonnet-4-6: $3/MTok input, $15/MTok output
+            input_tok = response.usage.input_tokens if response.usage else 200
+            output_tok = response.usage.output_tokens if response.usage else 100
+            call_cost = (input_tok * 3 + output_tok * 15) / 1_000_000
             self._total_calls += 1
-            self._estimated_cost_usd += (200 * 3 + 100 * 15) / 1_000_000
+            self._total_input_tokens += input_tok
+            self._total_output_tokens += output_tok
+            self._estimated_cost_usd += call_cost
+            self._save_stats()
 
             self._cache.set(cache_key, analysis)
 
@@ -190,7 +232,9 @@ class AIAnalyzer:
     def log_usage(self) -> None:
         logger.info(
             f"AI usage: {self._total_calls} calls | "
-            f"est. cost=${self._estimated_cost_usd:.4f}"
+            f"in={self._total_input_tokens:,} tok | "
+            f"out={self._total_output_tokens:,} tok | "
+            f"cost=${self._estimated_cost_usd:.4f}"
         )
 
     def _build_prompt(self, opp: "Opportunity") -> str:

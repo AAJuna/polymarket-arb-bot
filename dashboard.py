@@ -15,6 +15,7 @@ import streamlit as st
 import config
 
 PORTFOLIO_FILE = Path("data/portfolio.json")
+AI_STATS_FILE  = Path("data/ai_stats.json")
 REFRESH_SECONDS = 10
 
 st.set_page_config(
@@ -195,6 +196,16 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def load_ai_stats() -> dict:
+    if not AI_STATS_FILE.exists():
+        return {}
+    try:
+        with open(AI_STATS_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 
 def load_portfolio() -> dict | None:
     if not PORTFOLIO_FILE.exists():
@@ -476,6 +487,52 @@ else:
     st.markdown('<div style="color:#4b5563;font-size:0.8rem;padding:12px 0">No closed trades yet</div>', unsafe_allow_html=True)
 
 st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# AI Usage Stats
+# ---------------------------------------------------------------------------
+
+ai = load_ai_stats()
+if ai:
+    st.markdown('<div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.12em;color:#4b5563;font-weight:600;margin-bottom:12px">◈ AI Usage</div>', unsafe_allow_html=True)
+
+    a1, a2, a3, a4 = st.columns(4)
+    with a1:
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Total Calls</div>
+          <div class="stat-value">{ai.get("total_calls", 0):,}</div>
+          <div class="stat-sub muted">{ai.get("model", "—")}</div>
+        </div>''', unsafe_allow_html=True)
+    with a2:
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Input Tokens</div>
+          <div class="stat-value blue">{ai.get("total_input_tokens", 0):,}</div>
+          <div class="stat-sub muted">$3 / MTok</div>
+        </div>''', unsafe_allow_html=True)
+    with a3:
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Output Tokens</div>
+          <div class="stat-value blue">{ai.get("total_output_tokens", 0):,}</div>
+          <div class="stat-sub muted">$15 / MTok</div>
+        </div>''', unsafe_allow_html=True)
+    with a4:
+        cost = ai.get("estimated_cost_usd", 0.0)
+        updated = ai.get("updated_at", "")
+        try:
+            updated = datetime.fromisoformat(updated).strftime("%H:%M:%S")
+        except Exception:
+            updated = "—"
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Est. Cost</div>
+          <div class="stat-value {"red" if cost > 1 else "green"}">${cost:.4f}</div>
+          <div class="stat-sub muted">updated {updated}</div>
+        </div>''', unsafe_allow_html=True)
+
+    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Config snapshot
