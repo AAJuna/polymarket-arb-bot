@@ -303,10 +303,18 @@ class Portfolio:
 
     def log_status(self) -> None:
         m = self.compute_metrics()
+        day_start = self.state.day_start_bankroll
+        current = self.state.current_bankroll
+        daily_pnl = current - day_start
+        daily_pct = (daily_pnl / day_start * 100) if day_start > 0 else 0.0
+        daily_tag = "WIN" if daily_pnl >= 0 else "LOSS"
+        limit_pct = config.DAILY_LOSS_LIMIT_PCT * 100
         logger.info(
             f"┌─ PORTFOLIO ─────────────────────────────────────\n"
-            f"│  Bankroll : ${self.state.current_bankroll:.2f}  "
+            f"│  Bankroll : ${current:.2f}  "
             f"(peak ${self.state.peak_bankroll:.2f})\n"
+            f"│  Today    : [{daily_tag}] ${daily_pnl:+.2f} ({daily_pct:+.1f}%)  "
+            f"limit -{limit_pct:.0f}%\n"
             f"│  Trades   : {m.get('total_trades', 0)} total | "
             f"win rate {m.get('win_rate', 0):.1f}%\n"
             f"│  ROI      : {m.get('roi_pct', 0):+.1f}% | "

@@ -28,6 +28,21 @@ pm2 save
 
 ---
 
+## Dashboard (Streamlit UI)
+
+```bash
+# Install dependencies (sekali saja)
+pip install streamlit pandas
+
+# Jalankan dashboard
+streamlit run dashboard.py
+
+# Buka di browser: http://localhost:8501
+# Auto-refresh setiap 10 detik
+```
+
+---
+
 ## Monitoring
 
 ```bash
