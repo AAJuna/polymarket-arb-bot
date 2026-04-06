@@ -172,15 +172,28 @@ def run() -> None:
             trading_blocked, block_reason = risk.is_globally_blocked()
 
             if trading_blocked:
-                logger.info(
-                    f"━━ CYCLE {cycle:>4} ━━ IDLE ({block_reason}) | "
-                    f"bankroll=${port.state.current_bankroll:.2f} | "
-                    f"open={len(port.state.open_positions)}"
-                )
-                # Only check resolutions — skip market scan, odds, AI
+                open_before = len(port.state.open_positions)
                 port.check_resolutions()
+                open_after = len(port.state.open_positions)
+                closed_count = open_before - open_after
 
-            else:
+                if closed_count > 0:
+                    # A position resolved — re-evaluate, may allow new entries
+                    trading_blocked, block_reason = risk.is_globally_blocked()
+                    logger.info(
+                        f"━━ CYCLE {cycle:>4} ━━ {closed_count} position(s) resolved — "
+                        f"{'resuming trading' if not trading_blocked else f'still blocked ({block_reason})'} | "
+                        f"bankroll=${port.state.current_bankroll:.2f} | open={open_after}"
+                    )
+
+                if trading_blocked:
+                    logger.info(
+                        f"━━ CYCLE {cycle:>4} ━━ IDLE ({block_reason}) | "
+                        f"bankroll=${port.state.current_bankroll:.2f} | "
+                        f"open={len(port.state.open_positions)}"
+                    )
+
+            if not trading_blocked:
                 # 1. Scan markets
                 markets = scanner.scan_sports_markets()
 
