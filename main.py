@@ -203,18 +203,30 @@ def run() -> None:
                 # 3. Pre-filter — skip markets already open, apply edge threshold
                 #    Cap at top 5 by edge score to limit AI token spend
                 with port._lock:
-                    open_market_ids_prefilter = {
+                    open_market_ids = {
                         p.get("market_id") for p in port.state.open_positions.values()
                     }
                 filtered = sorted(
                     [
                         o for o in opportunities
                         if o.edge_pct >= config.MIN_EDGE_PCT
-                        and o.market_id not in open_market_ids_prefilter
+                        and o.market_id not in open_market_ids
                     ],
                     key=lambda o: o.edge_pct,
                     reverse=True,
                 )[:5]  # Only top 5 sent to AI — saves tokens
+
+                verified_candidates = []
+                for opp in filtered:
+                    is_open, _, reason = scanner.verify_market_open(opp.condition_id)
+                    if not is_open:
+                        logger.info(
+                            f"  skipped closed market {opp.market_id} "
+                            f"({reason}) | {opp.question[:50]}"
+                        )
+                        continue
+                    verified_candidates.append(opp)
+                filtered = verified_candidates
 
                 logger.info(
                     f"━━ CYCLE {cycle:>4} ━━ "
@@ -259,6 +271,13 @@ def run() -> None:
 
                     if not allowed:
                         logger.info(f"  blocked ({reason})")
+                        continue
+
+                    is_open, _, status_reason = scanner.verify_market_open(opp.condition_id)
+                    if not is_open:
+                        logger.info(
+                            f"  blocked (market_{status_reason}) | {opp.question[:50]}"
+                        )
                         continue
 
                     result = exec_.place_order(opp, size)

@@ -80,6 +80,16 @@ class Executor:
 
     def place_order(self, opp: "Opportunity", size_dollars: float) -> Optional[dict]:
         """Place a BUY order. Returns order result dict or None on failure."""
+        import scanner as market_scanner
+
+        is_open, _, reason = market_scanner.verify_market_open(opp.condition_id)
+        if not is_open:
+            logger.info(
+                f"Skipping {opp.market_id}: market not open ({reason}) | "
+                f"{opp.question[:50]}"
+            )
+            return None
+
         if config.PAPER_TRADING:
             return self._simulate_order(opp, size_dollars)
 

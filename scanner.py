@@ -5,6 +5,7 @@ Returns a list of MarketData objects used by all downstream modules.
 
 from __future__ import annotations
 
+from collections import Counter
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +25,7 @@ CLOB_FEE_URL = f"{config.POLYMARKET_HOST}/fee-rate"
 
 _market_cache = TTLCache(ttl_seconds=10)
 _fee_cache = TTLCache(ttl_seconds=config.FEE_CACHE_TTL)
+_market_status_cache = TTLCache(ttl_seconds=15)
 
 _session = requests.Session()
 _session.headers.update({"Accept": "application/json"})
@@ -50,9 +52,25 @@ class MarketData:
     sports_market_type: str        # e.g. "moneyline", "" if unknown
     fee_rate_yes: float
     fee_rate_no: float
+    active: bool = True
+    closed: bool = False
+    archived: bool = False
+    enable_order_book: bool = True
+    accepting_orders: bool = True
     last_updated: datetime = field(default_factory=utcnow)
     events: list = field(default_factory=list)  # raw event objects from Gamma API
-    accepting_orders: bool = True
+
+    @property
+    def is_open(self) -> bool:
+        if not self.active or self.closed or self.archived:
+            return False
+        if not self.enable_order_book or not self.accepting_orders:
+            return False
+        if seconds_until(self.end_date) <= 0:
+            return False
+        if self.events and not any(_is_event_open(event) for event in self.events):
+            return False
+        return True
 
     @property
     def hours_to_expiry(self) -> float:
@@ -66,7 +84,7 @@ class MarketData:
             and self.volume_24h >= config.MIN_VOLUME_24H
             and self.liquidity >= config.MIN_LIQUIDITY
             and self.hours_to_expiry >= config.MIN_HOURS_TO_EXPIRY
-            and self.accepting_orders
+            and self.is_open
         )
 
 
@@ -86,6 +104,63 @@ def _parse_list_field(value) -> list:
         except Exception:
             return []
     return []
+
+
+def _coerce_flag(raw: dict, key: str, default: bool) -> bool:
+    value = raw.get(key)
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _extract_end_date(raw: dict) -> Optional[datetime]:
+    end_date_str = raw.get("endDate") or raw.get("endDateIso") or raw.get("end_date_iso") or ""
+    if not end_date_str:
+        return None
+
+    try:
+        return parse_iso(end_date_str)
+    except Exception:
+        return None
+
+
+def _is_event_open(event: dict) -> bool:
+    if event.get("active") is False:
+        return False
+    if bool(event.get("closed")) or bool(event.get("archived")):
+        return False
+
+    end_date = _extract_end_date(event)
+    if end_date is not None and seconds_until(end_date) <= 0:
+        return False
+
+    return True
+
+
+def evaluate_market_status(raw: dict) -> tuple[bool, str]:
+    """Return whether a market is still open for trading plus the first failing reason."""
+    end_date = _extract_end_date(raw)
+    if end_date is None:
+        return False, "missing_end_date"
+
+    if raw.get("active") is False:
+        return False, "inactive"
+    if bool(raw.get("closed")):
+        return False, "closed"
+    if bool(raw.get("archived")):
+        return False, "archived"
+    if raw.get("acceptingOrders") is False:
+        return False, "not_accepting_orders"
+    if raw.get("enableOrderBook") is False:
+        return False, "orderbook_disabled"
+    if seconds_until(end_date) <= 0:
+        return False, "expired"
+
+    events = raw.get("events") or []
+    if events and not any(_is_event_open(event) for event in events):
+        return False, "event_closed"
+
+    return True, "open"
 
 
 def _is_sports_market(raw: dict) -> bool:
@@ -128,6 +203,8 @@ def _fetch_fee_rates_bulk(markets_raw: list[dict]) -> dict[str, float]:
         token_ids = _parse_list_field(raw.get("clobTokenIds"))
         if token_ids:
             rates[token_ids[0]] = config.DEFAULT_FEE_RATE
+        if len(token_ids) > 1:
+            rates[token_ids[1]] = config.DEFAULT_FEE_RATE
     return rates
 
 
@@ -144,10 +221,9 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
         yes_price = float(outcome_prices[0]) if len(outcome_prices) > 0 else 0.5
         no_price = float(outcome_prices[1]) if len(outcome_prices) > 1 else 0.5
 
-        end_date_str = raw.get("endDate") or raw.get("end_date_iso") or ""
-        if not end_date_str:
+        end_date = _extract_end_date(raw)
+        if end_date is None:
             return None
-        end_date = parse_iso(end_date_str)
 
         # Prefer event slug (used in polymarket.com/event/{slug} URLs)
         events = raw.get("events") or []
@@ -170,9 +246,13 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
             neg_risk=bool(raw.get("negRisk", False)),
             sports_market_type=raw.get("sportsMarketType") or "",
             fee_rate_yes=fee_rates.get(yes_id, config.DEFAULT_FEE_RATE),
-            fee_rate_no=fee_rates.get(yes_id, config.DEFAULT_FEE_RATE),  # same contract
+            fee_rate_no=fee_rates.get(no_id, config.DEFAULT_FEE_RATE),
+            active=_coerce_flag(raw, "active", True),
+            closed=_coerce_flag(raw, "closed", False),
+            archived=_coerce_flag(raw, "archived", False),
+            enable_order_book=_coerce_flag(raw, "enableOrderBook", True),
+            accepting_orders=_coerce_flag(raw, "acceptingOrders", True),
             events=raw.get("events") or [],
-            accepting_orders=bool(raw.get("acceptingOrders", True)),
         )
     except Exception as e:
         logger.debug(f"Failed to parse market {raw.get('id')}: {e}")
@@ -187,6 +267,7 @@ def _parse_market(raw: dict, fee_rates: dict[str, float]) -> Optional[MarketData
 def _fetch_page(offset: int, limit: int = 100) -> list[dict]:
     params = {
         "active": "true",
+        "closed": "false",
         "limit": limit,
         "offset": offset,
         "order": "volume24hr",
@@ -204,7 +285,14 @@ def _fetch_sports_events() -> list[dict]:
     try:
         resp = _session.get(
             GAMMA_EVENTS_URL,
-            params={"active": "true", "tag": "sports", "limit": 100, "order": "volume24hr", "ascending": "false"},
+            params={
+                "active": "true",
+                "closed": "false",
+                "tag": "sports",
+                "limit": 100,
+                "order": "volume24hr",
+                "ascending": "false",
+            },
             timeout=15,
         )
         resp.raise_for_status()
@@ -270,12 +358,33 @@ def scan_sports_markets() -> list[MarketData]:
     if not sports_raw:
         return []
 
+    open_sports_raw: list[dict] = []
+    rejected_statuses: Counter[str] = Counter()
+    for raw in sports_raw:
+        is_open, reason = evaluate_market_status(raw)
+        if not is_open:
+            rejected_statuses[reason] += 1
+            continue
+        open_sports_raw.append(raw)
+
+    if rejected_statuses:
+        breakdown = ", ".join(
+            f"{reason}={count}" for reason, count in rejected_statuses.most_common(5)
+        )
+        logger.info(
+            f"Filtered {sum(rejected_statuses.values())} sports markets that are not open "
+            f"({breakdown})"
+        )
+
+    if not open_sports_raw:
+        return []
+
     # Fetch fee rates
-    fee_rates = _fetch_fee_rates_bulk(sports_raw)
+    fee_rates = _fetch_fee_rates_bulk(open_sports_raw)
 
     # Parse
     markets: list[MarketData] = []
-    for raw in sports_raw:
+    for raw in open_sports_raw:
         m = _parse_market(raw, fee_rates)
         if m and m.is_valid:
             markets.append(m)
@@ -287,16 +396,32 @@ def scan_sports_markets() -> list[MarketData]:
 
 def get_market_status(condition_id: str) -> dict:
     """Fetch resolution status for a specific market."""
+    cached = _market_status_cache.get(condition_id)
+    if cached is not None:
+        return cached
+
     try:
         resp = _session.get(
-            f"{config.GAMMA_API_HOST}/markets",
-            params={"condition_id": condition_id},
+            GAMMA_MARKETS_URL,
+            params={"condition_ids": condition_id},
             timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
         if data:
-            return data[0] if isinstance(data, list) else data
+            market = data[0] if isinstance(data, list) else data
+            _market_status_cache.set(condition_id, market)
+            return market
     except Exception as e:
         logger.error(f"Failed to fetch market status for {condition_id}: {e}")
     return {}
+
+
+def verify_market_open(condition_id: str) -> tuple[bool, dict, str]:
+    """Fetch the latest Gamma payload and verify the market is still open."""
+    status = get_market_status(condition_id)
+    if not status:
+        return False, {}, "status_unavailable"
+
+    is_open, reason = evaluate_market_status(status)
+    return is_open, status, reason
