@@ -379,19 +379,35 @@ else:
 # Top metrics
 # ---------------------------------------------------------------------------
 
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 def pnl_color(v): return "c-green" if v >= 0 else "c-red"
 
 with c1:
     st.markdown(f'''
     <div class="stat-card">
-      <div class="stat-label">Total Equity</div>
-      <div class="stat-value">${realized_bankroll:.2f}</div>
-      <div class="stat-sub c-muted">Cash ${current:.2f} + ${open_cost:.2f} in {len(open_pos)} open positions</div>
+      <div class="stat-label">Cash Balance</div>
+      <div class="stat-value">${current:.2f}</div>
+      <div class="stat-sub c-muted">Available for new entries</div>
     </div>''', unsafe_allow_html=True)
 
 with c2:
+    st.markdown(f'''
+    <div class="stat-card">
+      <div class="stat-label">Open Exposure</div>
+      <div class="stat-value">${open_cost:.2f}</div>
+      <div class="stat-sub c-muted">{len(open_pos)} open positions</div>
+    </div>''', unsafe_allow_html=True)
+
+with c3:
+    st.markdown(f'''
+    <div class="stat-card">
+      <div class="stat-label">Total Equity</div>
+      <div class="stat-value">${realized_bankroll:.2f}</div>
+      <div class="stat-sub c-muted">Cash + open cost basis</div>
+    </div>''', unsafe_allow_html=True)
+
+with c4:
     color = pnl_color(daily_pnl)
     label = "Today's P&L  ▲" if daily_pnl >= 0 else "Today's P&L  ▼"
     pct = abs(daily_pnl) / day_start * 100 if day_start > 0 else 0
@@ -402,7 +418,7 @@ with c2:
       <div class="stat-sub {color}">{pct:+.1f}% today</div>
     </div>''', unsafe_allow_html=True)
 
-with c3:
+with c5:
     color = pnl_color(roi)
     st.markdown(f'''
     <div class="stat-card">
@@ -411,16 +427,7 @@ with c3:
       <div class="stat-sub {color}">{fmt_usd(total_pnl)} all-time</div>
     </div>''', unsafe_allow_html=True)
 
-with c4:
-    dd_color = "c-red" if dd > 5 else "c-green"
-    st.markdown(f'''
-    <div class="stat-card">
-      <div class="stat-label">Peak Bankroll</div>
-      <div class="stat-value">${peak:.2f}</div>
-      <div class="stat-sub {dd_color}">{f"−{dd:.1f}% drawdown" if dd > 0 else "✓ At peak"}</div>
-    </div>''', unsafe_allow_html=True)
-
-with c5:
+with c6:
     streak = f"🔥 {cons_wins}W streak" if cons_wins > 0 else (f"❄ {cons_losses}L streak" if cons_losses > 0 else "No streak")
     st.markdown(f'''
     <div class="stat-card">
@@ -501,7 +508,9 @@ if open_pos:
         url = build_market_url(pos)
         rows.append({
             "Market": pos.get("question", "")[:55],
-            "Side": pos.get("side", ""),
+            "Action": pos.get("action", "BUY"),
+            "Outcome": pos.get("side", ""),
+            "Status": pos.get("status", "open"),
             "Entry": f"{pos.get('entry_price', 0):.3f}",
             "Shares": f"{pos.get('size', 0):.2f}",
             "Cost": f"${pos.get('cost_basis', 0):.2f}",
@@ -548,7 +557,8 @@ if history:
         rows.append({
             "Result": result,
             "Market": pos.get("question", "")[:55],
-            "Side": pos.get("side", ""),
+            "Action": pos.get("action", "BUY"),
+            "Outcome": pos.get("side", ""),
             "Entry": f"{pos.get('entry_price', 0):.3f}",
             "Exit": f"{float(exit_price):.3f}" if exit_price is not None else "—",
             "Cost": f"${pos.get('cost_basis', 0):.2f}",

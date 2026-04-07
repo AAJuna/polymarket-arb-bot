@@ -246,10 +246,17 @@ def run() -> None:
                     open_market_ids = {
                         p.get("market_id") for p in port.state.open_positions.values()
                     }
+                min_required_edge = max(config.MIN_EDGE_PCT, config.AI_MIN_EDGE_PCT)
+                skipped_open_count = sum(
+                    1 for o in opportunities if o.market_id in open_market_ids
+                )
+                skipped_edge_count = sum(
+                    1 for o in opportunities if o.edge_pct < min_required_edge
+                )
                 filtered = sorted(
                     [
                         o for o in opportunities
-                        if o.edge_pct >= max(config.MIN_EDGE_PCT, config.AI_MIN_EDGE_PCT)
+                        if o.edge_pct >= min_required_edge
                         and o.market_id not in open_market_ids
                     ],
                     key=lambda o: o.edge_pct,
@@ -257,6 +264,7 @@ def run() -> None:
                 )[:config.AI_MAX_CANDIDATES]  # Cap AI queue — saves tokens and reduces noise
 
                 verified_candidates = []
+                pre_verify_count = len(filtered)
                 for opp in filtered:
                     is_open, _, reason = scanner.verify_market_open(opp.condition_id, opp.question)
                     if not is_open:
@@ -321,6 +329,14 @@ def run() -> None:
                     )
                 elif validated:
                     logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
+                elif not filtered:
+                    skipped_closed_count = pre_verify_count - len(filtered)
+                    logger.info(
+                        "  no AI candidates after filters "
+                        f"(already_open={skipped_open_count}, "
+                        f"below_edge={skipped_edge_count}, "
+                        f"closed_or_inactive={skipped_closed_count})"
+                    )
                 else:
                     logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")
 
