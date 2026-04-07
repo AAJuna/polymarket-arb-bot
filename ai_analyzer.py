@@ -182,11 +182,13 @@ class AIAnalyzer:
                 risk_factors=list(tool_result.get("risk_factors") or []),
             )
 
-            # Actual token usage from response
-            # claude-sonnet-4-6: $3/MTok input, $15/MTok output
+            # Actual token usage from response.
             input_tok = response.usage.input_tokens if response.usage else 200
             output_tok = response.usage.output_tokens if response.usage else 100
-            call_cost = (input_tok * 3 + output_tok * 15) / 1_000_000
+            call_cost = (
+                input_tok * config.AI_INPUT_PRICE_PER_MTOK
+                + output_tok * config.AI_OUTPUT_PRICE_PER_MTOK
+            ) / 1_000_000
             self._total_calls += 1
             self._total_input_tokens += input_tok
             self._total_output_tokens += output_tok

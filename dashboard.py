@@ -591,14 +591,14 @@ if ai:
         <div class="stat-card">
           <div class="stat-label">Input Tokens</div>
           <div class="stat-value c-blue">{ai.get("total_input_tokens", 0):,}</div>
-          <div class="stat-sub c-muted">$3.00 / MTok</div>
+          <div class="stat-sub c-muted">${config.AI_INPUT_PRICE_PER_MTOK:.2f} / MTok</div>
         </div>''', unsafe_allow_html=True)
     with a3:
         st.markdown(f'''
         <div class="stat-card">
           <div class="stat-label">Output Tokens</div>
           <div class="stat-value c-blue">{ai.get("total_output_tokens", 0):,}</div>
-          <div class="stat-sub c-muted">$15.00 / MTok</div>
+          <div class="stat-sub c-muted">${config.AI_OUTPUT_PRICE_PER_MTOK:.2f} / MTok</div>
         </div>''', unsafe_allow_html=True)
     with a4:
         cost = ai.get("estimated_cost_usd", 0.0)

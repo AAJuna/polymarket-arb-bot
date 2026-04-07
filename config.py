@@ -32,7 +32,7 @@ EXCHANGE_ADDRESS: str = "0x4bFb41d5B3570DeFd03C39a9A4D8DE6Bd8B8982E"
 # Anthropic Claude
 # ---------------------------------------------------------------------------
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-AI_MODEL: str = os.getenv("AI_MODEL", "claude-sonnet-4-6")
+AI_MODEL: str = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
 AI_MAX_TOKENS: int = 512
 AI_CALLS_PER_MINUTE: int = 30
 AI_CACHE_TTL: int = 180  # seconds
@@ -40,6 +40,23 @@ AI_SKIP_CACHE_TTL: int = int(os.getenv("AI_SKIP_CACHE_TTL", "600"))
 AI_MAX_CANDIDATES: int = int(os.getenv("AI_MAX_CANDIDATES", "2"))
 AI_MIN_EDGE_PCT: float = float(os.getenv("AI_MIN_EDGE_PCT", "6.0"))
 AI_PAPER_MODE: str = os.getenv("AI_PAPER_MODE", "gate").strip().lower()  # gate | advisory
+
+
+def _ai_pricing_per_mtok(model: str) -> tuple[float, float]:
+    """Return approximate input/output USD per 1M tokens for dashboard cost tracking."""
+    model = model.lower()
+    if "haiku-4-5" in model:
+        return 1.0, 5.0
+    if "sonnet" in model:
+        return 3.0, 15.0
+    if "opus" in model:
+        return 15.0, 75.0
+    if "haiku" in model:
+        return 0.25, 1.25
+    return 3.0, 15.0
+
+
+AI_INPUT_PRICE_PER_MTOK, AI_OUTPUT_PRICE_PER_MTOK = _ai_pricing_per_mtok(AI_MODEL)
 
 # ---------------------------------------------------------------------------
 # The Odds API
