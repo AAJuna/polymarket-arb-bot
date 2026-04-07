@@ -115,6 +115,7 @@ def _print_startup_summary(port: Portfolio) -> None:
         ["AI queue", config.AI_MAX_CANDIDATES],
         ["AI min edge", f"{config.AI_MIN_EDGE_PCT:.1f}%"],
         ["Min AI confidence", f"{config.MIN_AI_CONFIDENCE:.0%}"],
+        ["AI paper mode", config.AI_PAPER_MODE if config.PAPER_TRADING else "gate"],
         ["Strategies", f"same={config.ENABLE_SAME_MARKET_ARB} cross={config.ENABLE_CROSS_MARKET_ARB} odds={config.ENABLE_ODDS_COMPARISON_ARB}"],
         ["Bet size", f"{config.BET_SIZE_PCT:.1f}% of bankroll"],
         ["Max bet", f"${config.MAX_BET_SIZE:.2f}"],
@@ -278,6 +279,8 @@ def run() -> None:
 
                 # 4. AI validation
                 validated = []
+                ai_pass_count = 0
+                advisory_override_count = 0
                 for opp in filtered:
                     analysis = ai.analyze(opp)
                     if analysis is None:
@@ -295,6 +298,15 @@ def run() -> None:
                             continue
 
                     if analysis.is_valid and analysis.recommended_side == opp.side:
+                        ai_pass_count += 1
+                        validated.append((opp, analysis))
+                    elif config.PAPER_TRADING and config.AI_PAPER_MODE == "advisory":
+                        advisory_override_count += 1
+                        logger.info(
+                            f"  paper advisory override for {opp.market_id} "
+                            f"(ai_side={analysis.recommended_side}, "
+                            f"edge={analysis.edge_detected}, conf={analysis.confidence:.2f})"
+                        )
                         validated.append((opp, analysis))
                     elif analysis.is_valid:
                         logger.info(
@@ -302,7 +314,12 @@ def run() -> None:
                             f"(opp={opp.side}, ai={analysis.recommended_side})"
                         )
 
-                if validated:
+                if validated and advisory_override_count:
+                    logger.info(
+                        f"  ✓ {ai_pass_count} AI pass + "
+                        f"{advisory_override_count} paper advisory override -> executing"
+                    )
+                elif validated:
                     logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
                 else:
                     logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")

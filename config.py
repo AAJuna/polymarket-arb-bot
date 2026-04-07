@@ -39,6 +39,7 @@ AI_CACHE_TTL: int = 180  # seconds
 AI_SKIP_CACHE_TTL: int = int(os.getenv("AI_SKIP_CACHE_TTL", "600"))
 AI_MAX_CANDIDATES: int = int(os.getenv("AI_MAX_CANDIDATES", "2"))
 AI_MIN_EDGE_PCT: float = float(os.getenv("AI_MIN_EDGE_PCT", "6.0"))
+AI_PAPER_MODE: str = os.getenv("AI_PAPER_MODE", "gate").strip().lower()  # gate | advisory
 
 # ---------------------------------------------------------------------------
 # The Odds API
@@ -132,4 +133,6 @@ def validate() -> list[str]:
         issues.append("PAPER_TRADING=true — no real orders will be placed")
     if RESET_STATE_ON_START:
         issues.append("RESET_STATE_ON_START=true — persisted state will be cleared at startup")
+    if not PAPER_TRADING and AI_PAPER_MODE != "gate":
+        issues.append("AI_PAPER_MODE is ignored in live mode — AI remains a hard gate")
     return issues
