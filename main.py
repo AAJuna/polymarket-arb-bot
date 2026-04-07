@@ -10,9 +10,11 @@ Environment:
 """
 
 import argparse
+import json
 import signal
 import sys
 import time
+from pathlib import Path
 
 import config
 import scanner
@@ -136,6 +138,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="With --fresh-start, preserve logs/ while clearing saved bot state",
     )
+    parser.add_argument(
+        "--opportunity-report",
+        action="store_true",
+        help="Scan and print opportunities without trading or calling AI",
+    )
+    parser.add_argument(
+        "--expiry-hours",
+        type=float,
+        default=48.0,
+        help="With --opportunity-report, only inspect markets ending within this many hours",
+    )
+    parser.add_argument(
+        "--report-limit",
+        type=int,
+        default=25,
+        help="Maximum rows to print in --opportunity-report",
+    )
     return parser.parse_args(argv)
 
 
@@ -148,6 +167,105 @@ def _log_reset_summary(summary: dict) -> None:
     )
     for err in errors:
         logger.warning(f"Fresh start reset warning: {err}")
+
+
+def _load_open_market_ids() -> set[str]:
+    """Read open market IDs directly without mutating portfolio state."""
+    portfolio_file = Path("data") / "portfolio.json"
+    if not portfolio_file.exists():
+        return set()
+    try:
+        data = json.loads(portfolio_file.read_text(encoding="utf-8"))
+        return {
+            str(pos.get("market_id"))
+            for pos in (data.get("open_positions") or {}).values()
+            if pos.get("market_id")
+        }
+    except Exception as e:
+        logger.warning(f"Opportunity report could not read portfolio state: {e}")
+        return set()
+
+
+def run_opportunity_report(expiry_hours: float = 48.0, limit: int = 25) -> None:
+    """Print an inspection-only opportunity report for a near-expiry window."""
+    window_hours = max(0.0, float(expiry_hours))
+    row_limit = max(1, int(limit))
+
+    logger.info(
+        f"Running opportunity report only — expiry_window={window_hours:.1f}h, "
+        "no trades, no AI calls"
+    )
+
+    markets = scanner.scan_sports_markets()
+    window_markets = [
+        market for market in markets
+        if 0 < market.hours_to_expiry <= window_hours
+    ]
+    type_counts: dict[str, int] = {}
+    for market in window_markets:
+        market_type = market.sports_market_type or "unknown"
+        type_counts[market_type] = type_counts.get(market_type, 0) + 1
+
+    opportunities = arbitrage.find_opportunities(window_markets)
+    open_market_ids = _load_open_market_ids()
+
+    print()
+    print("Opportunity Report")
+    print(f"Markets scanned        : {len(markets)}")
+    print(f"Markets <= {window_hours:.1f}h     : {len(window_markets)}")
+    print(f"Opportunities found   : {len(opportunities)}")
+    print(f"Open market conflicts : {sum(1 for o in opportunities if o.market_id in open_market_ids)}")
+    if type_counts:
+        by_type = ", ".join(f"{k}={v}" for k, v in sorted(type_counts.items()))
+        print(f"Window market types   : {by_type}")
+    print()
+
+    if not markets:
+        print("No markets were returned. Check Gamma API/network access before interpreting this report.")
+        return
+
+    if not opportunities:
+        print("No opportunities found in this expiry window using the current detector settings.")
+        print("This does not mean there are no markets; it means none passed the current edge/match filters.")
+        return
+
+    rows = []
+    for opp in opportunities[:row_limit]:
+        ext = opp.external_odds
+        if ext is not None:
+            external = (
+                f"{ext.home_team} vs {ext.away_team} "
+                f"conf={ext.match_confidence:.2f}"
+            )
+        else:
+            external = "-"
+        rows.append([
+            "yes" if opp.market_id in open_market_ids else "no",
+            opp.type,
+            opp.question[:60],
+            opp.side,
+            f"{opp.price:.3f}",
+            f"{opp.edge_pct:.1f}%",
+            f"{opp.raw_data.hours_to_expiry:.1f}h",
+            external[:45],
+            opp.market_url,
+        ])
+
+    print(tabulate(
+        rows,
+        headers=[
+            "Already Open",
+            "Type",
+            "Market",
+            "Outcome",
+            "Price",
+            "Edge",
+            "Ends",
+            "External Match",
+            "URL",
+        ],
+        tablefmt="github",
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +540,13 @@ def main(argv: list[str] | None = None) -> None:
 
     if reset_summary is not None:
         _log_reset_summary(reset_summary)
+
+    if args.opportunity_report:
+        run_opportunity_report(
+            expiry_hours=args.expiry_hours,
+            limit=args.report_limit,
+        )
+        return
 
     run()
 

@@ -94,6 +94,23 @@ Catatan:
 
 ---
 
+## Opportunity Report
+
+```bash
+# Inspect market yang selesai dalam 48 jam tanpa trade dan tanpa AI call
+python main.py --opportunity-report --expiry-hours 48
+
+# Batasi jumlah row output
+python main.py --opportunity-report --expiry-hours 24 --report-limit 10
+```
+
+Catatan:
+- Ini hanya report inspeksi. Bot tidak entry order dan tidak memanggil Claude.
+- Report memakai detector opportunity yang sama dengan bot, lalu menandai jika market sudah ada di open positions.
+- Gunakan ini untuk melihat apakah expiry window 1-2 hari punya opportunity tanpa mengubah prioritas trading loop utama.
+
+---
+
 ## Update Config Tanpa Restart
 
 ```bash
