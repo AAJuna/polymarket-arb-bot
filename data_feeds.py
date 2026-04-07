@@ -5,6 +5,7 @@ with Polymarket prices (odds comparison arbitrage).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -41,6 +42,7 @@ class ExternalOdds:
     draw_prob: Optional[float]
     source: str = "theoddsapi"
     fetched_at: datetime = None
+    match_confidence: float = 0.0   # 0–1; how well this entry matched the Polymarket question
 
     def __post_init__(self):
         if self.fetched_at is None:
@@ -186,7 +188,7 @@ def _make_event_key(home: str, away: str, dt: datetime) -> str:
 def get_odds_for_market(question: str, end_date: datetime) -> Optional[ExternalOdds]:
     """Fuzzy-match a Polymarket question to an ExternalOdds entry.
 
-    Returns the best match if:
+    Returns the best match (with match_confidence set) if:
     - Both team names appear in the question
     - Event commences within 24 hours of end_date
     Otherwise returns None.
@@ -198,6 +200,7 @@ def get_odds_for_market(question: str, end_date: datetime) -> Optional[ExternalO
     q_norm = _normalize(question)
     best: Optional[ExternalOdds] = None
     best_score = 0
+    best_confidence = 0.0
 
     for odds in all_odds:
         # Check team names
@@ -220,8 +223,21 @@ def get_odds_for_market(question: str, end_date: datetime) -> Optional[ExternalO
             continue
 
         score = home_overlap + away_overlap
+
+        # Confidence score: token overlap ratio (70%) + time proximity (30%)
+        total_team_words = max(1, len(home_words | away_words))
+        token_ratio = min(1.0, (home_overlap + away_overlap) / total_team_words)
+        hours_diff = time_diff / 3600.0
+        time_proximity = max(0.0, 1.0 - hours_diff / 24.0)
+        confidence = token_ratio * 0.7 + time_proximity * 0.3
+
         if score > best_score:
             best_score = score
+            best_confidence = confidence
             best = odds
 
-    return best
+    if best is None:
+        return None
+
+    # Return a copy with match_confidence set (avoids mutating the shared cache object)
+    return dataclasses.replace(best, match_confidence=best_confidence)

@@ -7,6 +7,7 @@ Arbitrage Detector — finds mispricing opportunities across three strategies:
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,7 +20,7 @@ import data_feeds
 from data_feeds import ExternalOdds
 from logger_setup import get_logger
 from scanner import MarketData
-from utils import TTLCache, fee_adjusted_cost, retry, utcnow
+from utils import TTLCache, compute_orderbook_depth, fee_adjusted_cost, retry, utcnow
 
 logger = get_logger(__name__)
 
@@ -31,6 +32,11 @@ _price_cache = TTLCache(ttl_seconds=5)
 _book_cache = TTLCache(ttl_seconds=5)
 
 BATCH_SIZE = 100  # max token_ids per batch request
+
+# Tracks wall-clock time when each token's price was last fetched (for freshness checks)
+_price_timestamps: dict[str, float] = {}
+# Stores full ask-level lists from /book responses (keyed by token_id)
+_book_asks_cache: dict[str, list] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +70,12 @@ def _fetch_midpoints_batch(token_ids: list[str]) -> dict[str, float]:
             )
             resp.raise_for_status()
             data = resp.json()
+            now = time.monotonic()
             for token_id, price_str in data.items():
                 price = float(price_str)
                 results[token_id] = price
                 _price_cache.set(token_id, price)
+                _price_timestamps[token_id] = now
         except Exception as e:
             logger.debug(f"Batch midpoint POST failed for chunk: {e}")
             try:
@@ -78,10 +86,12 @@ def _fetch_midpoints_batch(token_ids: list[str]) -> dict[str, float]:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                now = time.monotonic()
                 for token_id, price_str in data.items():
                     price = float(price_str)
                     results[token_id] = price
                     _price_cache.set(token_id, price)
+                    _price_timestamps[token_id] = now
             except Exception as fallback_error:
                 logger.debug(f"Batch midpoint fallback GET failed for chunk: {fallback_error}")
 
@@ -145,7 +155,20 @@ def _get_best_ask(token_id: str) -> Optional[float]:
     # asks are sorted ascending; first entry is best (lowest) ask
     best_ask = float(asks[0].get("price", 0))
     _book_cache.set(token_id, best_ask)
+    _book_asks_cache[token_id] = asks          # store full depth for liquidity checks
+    _price_timestamps[token_id] = time.monotonic()
     return best_ask
+
+
+def _get_orderbook_asks(token_id: str) -> list:
+    """Return the cached full asks list for a token (populated by _get_best_ask)."""
+    return _book_asks_cache.get(token_id, [])
+
+
+def _is_price_fresh(token_id: str) -> bool:
+    """Return True if the token's price was fetched within MAX_STALE_MS milliseconds."""
+    ts = _price_timestamps.get(token_id, 0.0)
+    return (time.monotonic() - ts) * 1000 <= config.MAX_STALE_MS
 
 
 # ---------------------------------------------------------------------------
@@ -180,16 +203,36 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
         if ask_yes is None or ask_no is None:
             continue
 
+        # Reject stale prices — price must have been fetched within MAX_STALE_MS
+        if not _is_price_fresh(m.yes_token_id) or not _is_price_fresh(m.no_token_id):
+            logger.debug(f"Stale price skipped: {m.market_id}")
+            continue
+
         # Fee-adjusted costs
         cost_yes = fee_adjusted_cost(ask_yes, m.fee_rate_yes)
         cost_no = fee_adjusted_cost(ask_no, m.fee_rate_no)
         total_cost = cost_yes + cost_no
 
-        if total_cost >= 1.0:
+        # Use conservative threshold (< 0.985) instead of bare < 1.0
+        if total_cost >= config.SAME_MARKET_COST_THRESHOLD:
             continue
 
         edge_pct = (1.0 - total_cost) / total_cost * 100
         if edge_pct < config.MIN_EDGE_PCT:
+            continue
+
+        # Liquidity depth check — fetch orderbook only for markets that pass cost filter
+        _get_best_ask(m.yes_token_id)
+        _get_best_ask(m.no_token_id)
+        asks_yes = _get_orderbook_asks(m.yes_token_id)
+        asks_no  = _get_orderbook_asks(m.no_token_id)
+        _, depth_yes = compute_orderbook_depth(asks_yes, config.TRADE_SIZE_TARGET_USD)
+        _, depth_no  = compute_orderbook_depth(asks_no,  config.TRADE_SIZE_TARGET_USD)
+        if depth_yes < config.MIN_LIQUIDITY_DEPTH_USD or depth_no < config.MIN_LIQUIDITY_DEPTH_USD:
+            logger.debug(
+                f"Insufficient depth: {m.market_id} "
+                f"YES=${depth_yes:.0f} NO=${depth_no:.0f} (min=${config.MIN_LIQUIDITY_DEPTH_USD:.0f})"
+            )
             continue
 
         logger.debug(
@@ -246,6 +289,20 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
 # Strategy B — Cross-market arbitrage
 # ---------------------------------------------------------------------------
 
+def _cross_market_confidence(group: list[MarketData], gap: float) -> float:
+    """Score how reliable a cross-market signal is (0–1).
+
+    Three factors:
+    - count_score:    2-market groups are cleanest; larger groups are penalised
+    - gap_score:      gaps of 5–15% are credible; larger gaps look like data artefacts
+    - longshot_penalty: any yes_price < 0.05 suggests a corrupted or partial group
+    """
+    count_score = {2: 1.0, 3: 0.9, 4: 0.75}.get(len(group), 0.5)
+    longshot_penalty = 0.3 if any(m.yes_price < 0.05 for m in group) else 0.0
+    gap_score = 1.0 if 0.05 <= gap <= 0.15 else (0.8 if gap <= 0.20 else 0.5)
+    return max(0.0, count_score * gap_score - longshot_penalty)
+
+
 def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportunity]:
     """
     Group markets by event. If probabilities of all outcomes don't sum to ~1,
@@ -290,12 +347,21 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
         if edge_pct < config.MIN_EDGE_PCT or edge_pct > 50.0:
             continue
 
+        # Confidence gate: reject low-quality signals (partial groups, suspicious gaps)
+        confidence = _cross_market_confidence(group, gap)
+        if confidence < config.CROSS_MARKET_CONFIDENCE_THRESHOLD:
+            logger.debug(
+                f"Cross-market low confidence: event={event_id} "
+                f"confidence={confidence:.2f} gap={gap:.3f}"
+            )
+            continue
+
         # BUY the cheapest YES token (most underpriced)
         cheapest = min(group, key=lambda m: m.yes_price)
 
         logger.debug(
             f"Cross-market arb: event={event_id} total_prob={total_yes_prob:.3f} "
-            f"gap={gap:.3f} edge={edge_pct:.1f}%"
+            f"gap={gap:.3f} edge={edge_pct:.1f}% confidence={confidence:.2f}"
         )
 
         opps.append(Opportunity(
@@ -346,6 +412,13 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
 
         ext = data_feeds.get_odds_for_market(m.question, m.end_date)
         if ext is None:
+            continue
+
+        # Reject weak fuzzy matches — team name overlap or time proximity too low
+        if ext.match_confidence < config.ODDS_MATCH_MIN_CONFIDENCE:
+            logger.debug(
+                f"Low odds match confidence {ext.match_confidence:.2f}: {m.question[:60]}"
+            )
             continue
 
         # Try to determine if the YES outcome corresponds to the home or away team

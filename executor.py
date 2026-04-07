@@ -219,10 +219,12 @@ class Executor:
                         "price": plan["exec_price"],
                         "token_id": opp.token_id,
                     }
+                paired = getattr(opp, "paired_token_id", None)
+                bundle_note = f" [bundle→{paired[:8]}…]" if paired else ""
                 logger.info(
                     f"Order placed: {order_id[:12]}… | "
                     f"{opp.question[:40]} | {opp.side} | "
-                    f"{plan['shares']:.4f} shares @ ${plan['exec_price']:.4f}"
+                    f"{plan['shares']:.4f} shares @ ${plan['exec_price']:.4f}{bundle_note}"
                 )
                 return {
                     "success": True,

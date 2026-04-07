@@ -206,3 +206,31 @@ def polymarket_fee(price: float, fee_rate: float) -> float:
 def fee_adjusted_cost(price: float, fee_rate: float) -> float:
     """Total cost to acquire 1 share including Polymarket fee."""
     return price + polymarket_fee(price, fee_rate)
+
+
+def compute_orderbook_depth(asks: list, target_usd: float) -> tuple:
+    """Simulate filling `target_usd` against an asks list.
+
+    Each ask level is a dict with 'price' and 'size' keys (size in shares).
+    Returns (effective_avg_price, available_usd_fillable):
+    - effective_avg_price: cost-weighted average price to fill up to target_usd
+    - available_usd_fillable: how much USD can actually be filled (min of depth and target)
+
+    Returns (0.0, 0.0) if the asks list is empty or all levels are invalid.
+    """
+    filled_usd = 0.0
+    cost = 0.0
+    for level in asks:
+        price = float(level.get("price", 0))
+        size = float(level.get("size", 0))
+        if price <= 0 or size <= 0:
+            continue
+        level_usd = price * size
+        take_usd = min(level_usd, target_usd - filled_usd)
+        cost += take_usd
+        filled_usd += take_usd
+        if filled_usd >= target_usd:
+            break
+    if filled_usd == 0:
+        return (0.0, 0.0)
+    return (cost / filled_usd, filled_usd)

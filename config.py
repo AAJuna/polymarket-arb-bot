@@ -136,6 +136,22 @@ DEFAULT_FEE_RATE: float = 0.05
 # Fee cache TTL
 FEE_CACHE_TTL: int = 600  # 10 minutes
 
+# ---------------------------------------------------------------------------
+# Arbitrage hardening
+# ---------------------------------------------------------------------------
+# Same-market: total cost must be below this threshold (not just < 1.0)
+SAME_MARKET_COST_THRESHOLD: float = float(os.getenv("SAME_MARKET_COST_THRESHOLD", "0.985"))
+# Reject a price that was fetched more than this many milliseconds ago
+MAX_STALE_MS: int = int(os.getenv("MAX_STALE_MS", "2000"))
+# Minimum ask-side depth (USD) required to emit a same-market opportunity
+MIN_LIQUIDITY_DEPTH_USD: float = float(os.getenv("MIN_LIQUIDITY_DEPTH_USD", "500.0"))
+# Cross-market: skip group if computed confidence falls below this
+CROSS_MARKET_CONFIDENCE_THRESHOLD: float = float(os.getenv("CROSS_MARKET_CONFIDENCE_THRESHOLD", "0.80"))
+# Odds comparison: skip match if fuzzy-match confidence falls below this
+ODDS_MATCH_MIN_CONFIDENCE: float = float(os.getenv("ODDS_MATCH_MIN_CONFIDENCE", "0.80"))
+# Target trade size (USD) used for size-aware depth simulation
+TRADE_SIZE_TARGET_USD: float = float(os.getenv("TRADE_SIZE_TARGET_USD", "100.0"))
+
 
 def validate() -> list[str]:
     """Return a list of missing/invalid configuration warnings."""
