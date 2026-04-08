@@ -8,7 +8,7 @@ Arbitrage Detector — finds mispricing opportunities across three strategies:
 from __future__ import annotations
 
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -178,7 +178,7 @@ def _is_price_fresh(token_id: str) -> bool:
 def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportunity]:
     """
     Buy YES + NO when total fee-adjusted cost < $1.
-    Uses batch midpoint API for efficiency — one request for all tokens.
+    Uses executable ask-side orderbook prices rather than midpoint prices.
     """
     opps: list[Opportunity] = []
 
@@ -187,18 +187,9 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
     if not candidates:
         return []
 
-    # Fetch all midpoints in batch (1 HTTP request instead of N*2)
-    all_token_ids = []
     for m in candidates:
-        all_token_ids.append(m.yes_token_id)
-        all_token_ids.append(m.no_token_id)
-
-    midpoints = _fetch_midpoints_batch(all_token_ids)
-    logger.debug(f"Batch midpoint fetch: {len(midpoints)} prices for {len(candidates)} candidate markets")
-
-    for m in candidates:
-        ask_yes = midpoints.get(m.yes_token_id)
-        ask_no = midpoints.get(m.no_token_id)
+        ask_yes = _get_best_ask(m.yes_token_id)
+        ask_no = _get_best_ask(m.no_token_id)
 
         if ask_yes is None or ask_no is None:
             continue
@@ -208,9 +199,20 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
             logger.debug(f"Stale price skipped: {m.market_id}")
             continue
 
-        # Fee-adjusted costs
-        cost_yes = fee_adjusted_cost(ask_yes, m.fee_rate_yes)
-        cost_no = fee_adjusted_cost(ask_no, m.fee_rate_no)
+        asks_yes = _get_orderbook_asks(m.yes_token_id)
+        asks_no  = _get_orderbook_asks(m.no_token_id)
+        avg_yes, depth_yes = compute_orderbook_depth(asks_yes, config.TRADE_SIZE_TARGET_USD)
+        avg_no, depth_no  = compute_orderbook_depth(asks_no,  config.TRADE_SIZE_TARGET_USD)
+        if depth_yes < config.MIN_LIQUIDITY_DEPTH_USD or depth_no < config.MIN_LIQUIDITY_DEPTH_USD:
+            logger.debug(
+                f"Insufficient depth: {m.market_id} "
+                f"YES=${depth_yes:.0f} NO=${depth_no:.0f} (min=${config.MIN_LIQUIDITY_DEPTH_USD:.0f})"
+            )
+            continue
+
+        # Fee-adjusted costs from executable depth, not midpoint.
+        cost_yes = fee_adjusted_cost(avg_yes, m.fee_rate_yes)
+        cost_no = fee_adjusted_cost(avg_no, m.fee_rate_no)
         total_cost = cost_yes + cost_no
 
         # Use conservative threshold (< 0.985) instead of bare < 1.0
@@ -219,20 +221,6 @@ def _find_same_market_opportunities(markets: list[MarketData]) -> list[Opportuni
 
         edge_pct = (1.0 - total_cost) / total_cost * 100
         if edge_pct < config.MIN_EDGE_PCT:
-            continue
-
-        # Liquidity depth check — fetch orderbook only for markets that pass cost filter
-        _get_best_ask(m.yes_token_id)
-        _get_best_ask(m.no_token_id)
-        asks_yes = _get_orderbook_asks(m.yes_token_id)
-        asks_no  = _get_orderbook_asks(m.no_token_id)
-        _, depth_yes = compute_orderbook_depth(asks_yes, config.TRADE_SIZE_TARGET_USD)
-        _, depth_no  = compute_orderbook_depth(asks_no,  config.TRADE_SIZE_TARGET_USD)
-        if depth_yes < config.MIN_LIQUIDITY_DEPTH_USD or depth_no < config.MIN_LIQUIDITY_DEPTH_USD:
-            logger.debug(
-                f"Insufficient depth: {m.market_id} "
-                f"YES=${depth_yes:.0f} NO=${depth_no:.0f} (min=${config.MIN_LIQUIDITY_DEPTH_USD:.0f})"
-            )
             continue
 
         logger.debug(
@@ -396,7 +384,50 @@ def _is_moneyline_market(market: MarketData) -> bool:
     return market_type == "moneyline"
 
 
-def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Opportunity]:
+def _is_unsupported_odds_market(market: MarketData) -> bool:
+    text = " ".join([
+        market.question,
+        market.slug,
+        market.market_slug,
+    ]).lower()
+    blocked_terms = (
+        "exact score",
+        "o/u",
+        "over/under",
+        "spread",
+        "handicap",
+        "total goals",
+        "total points",
+        "player",
+    )
+    return any(term in text for term in blocked_terms)
+
+
+def _odds_match_context(market: MarketData) -> str:
+    pieces = [market.event_slug, market.market_slug, market.slug]
+    for event in market.events or []:
+        for key in ("title", "name", "slug", "ticker"):
+            value = event.get(key)
+            if value:
+                pieces.append(str(value))
+    return " ".join(pieces)
+
+
+def _sportsbook_probability_for_market(
+    market: MarketData,
+    odds: ExternalOdds,
+) -> tuple[Optional[float], str]:
+    side = data_feeds.match_team_side(market.question, odds)
+    if side == "home":
+        return odds.home_prob, "home"
+    if side == "away":
+        return odds.away_prob, "away"
+    if side == "draw":
+        return odds.draw_prob, "draw"
+    return None, "ambiguous_side"
+
+
+def _find_odds_comparison_opportunities_legacy(markets: list[MarketData]) -> list[Opportunity]:
     """
     Compare Polymarket YES price with consensus sportsbook probability.
     If sportsbook thinks team wins 60% but Polymarket prices YES at 50¢ → 10% edge.
@@ -405,17 +436,30 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
         return []
 
     opps: list[Opportunity] = []
+    stats: Counter[str] = Counter()
 
     for m in markets:
+        stats["markets"] += 1
         if config.ODDS_COMPARISON_MONEYLINE_ONLY and not _is_moneyline_market(m):
+            stats["non_moneyline"] += 1
+            continue
+        if _is_unsupported_odds_market(m):
+            stats["unsupported_market"] += 1
             continue
 
-        ext = data_feeds.get_odds_for_market(m.question, m.end_date)
+        ext = data_feeds.get_odds_for_market(
+            m.question,
+            m.end_date,
+            context_text=_odds_match_context(m),
+        )
         if ext is None:
+            stats["no_odds_match"] += 1
             continue
+        stats["matched"] += 1
 
         # Reject weak fuzzy matches — team name overlap or time proximity too low
         if ext.match_confidence < config.ODDS_MATCH_MIN_CONFIDENCE:
+            stats["low_confidence"] += 1
             logger.debug(
                 f"Low odds match confidence {ext.match_confidence:.2f}: {m.question[:60]}"
             )
@@ -479,6 +523,96 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             market_url=m.market_url,
         ))
 
+    return opps
+
+
+def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Opportunity]:
+    """
+    Compare Polymarket YES price with consensus sportsbook probability.
+    Event context may identify the matchup, but the market question itself
+    must identify the exact YES outcome.
+    """
+    if not config.ODDS_API_KEY or not config.ENABLE_ODDS_COMPARISON_ARB:
+        return []
+
+    opps: list[Opportunity] = []
+    stats: Counter[str] = Counter()
+
+    for m in markets:
+        stats["markets"] += 1
+        if config.ODDS_COMPARISON_MONEYLINE_ONLY and not _is_moneyline_market(m):
+            stats["non_moneyline"] += 1
+            continue
+        if _is_unsupported_odds_market(m):
+            stats["unsupported_market"] += 1
+            continue
+
+        ext = data_feeds.get_odds_for_market(
+            m.question,
+            m.end_date,
+            context_text=_odds_match_context(m),
+        )
+        if ext is None:
+            stats["no_odds_match"] += 1
+            continue
+        stats["matched"] += 1
+
+        if ext.match_confidence < config.ODDS_MATCH_MIN_CONFIDENCE:
+            stats["low_confidence"] += 1
+            logger.debug(
+                f"Low odds match confidence {ext.match_confidence:.2f}: {m.question[:60]}"
+            )
+            continue
+
+        sportsbook_prob, side_reason = _sportsbook_probability_for_market(m, ext)
+        if sportsbook_prob is None:
+            stats[side_reason] += 1
+            continue
+
+        edge_pct = (sportsbook_prob - m.yes_price) * 100
+        if edge_pct < config.MIN_EDGE_PCT:
+            stats["below_edge"] += 1
+            continue
+
+        stats["emitted"] += 1
+        logger.debug(
+            f"Odds arb: {m.question[:50]} | "
+            f"polymarket={m.yes_price:.3f} sportsbook={sportsbook_prob:.3f} edge={edge_pct:.1f}%"
+        )
+
+        opps.append(Opportunity(
+            type="odds_comparison",
+            market_id=m.market_id,
+            condition_id=m.condition_id,
+            token_id=m.yes_token_id,
+            side="YES",
+            price=m.yes_price,
+            edge_pct=edge_pct,
+            confidence_source="odds_comparison",
+            yes_price=m.yes_price,
+            no_price=m.no_price,
+            question=m.question,
+            end_date=m.end_date,
+            raw_data=m,
+            external_odds=ext,
+            slug=m.slug,
+            event_slug=m.event_slug,
+            market_slug=m.market_slug,
+            market_url=m.market_url,
+        ))
+
+    logger.info(
+        "Odds comparison filters: "
+        f"markets={stats['markets']} "
+        f"non_moneyline={stats['non_moneyline']} "
+        f"unsupported={stats['unsupported_market']} "
+        f"matched={stats['matched']} "
+        f"no_match={stats['no_odds_match']} "
+        f"low_conf={stats['low_confidence']} "
+        f"ambiguous={stats['ambiguous_side']} "
+        f"below_edge={stats['below_edge']} "
+        f"emitted={stats['emitted']}"
+    )
     return opps
 
 

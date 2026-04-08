@@ -36,12 +36,13 @@ class RiskManager:
         """
         state = self._portfolio.state
         bankroll = state.current_bankroll
+        equity = self._equity()
 
         if bankroll <= 0:
             return 0.0
 
         bet_pct = adjusted_bet_pct if adjusted_bet_pct is not None else config.BET_SIZE_PCT
-        size = bankroll * (bet_pct / 100.0)
+        size = equity * (bet_pct / 100.0)
 
         # Drawdown reductions
         drawdown = self._drawdown()
@@ -68,7 +69,8 @@ class RiskManager:
             )
 
         # Floor / ceiling
-        size = max(config.INITIAL_BET_SIZE, min(size, config.MAX_BET_SIZE))
+        minimum_size = min(config.INITIAL_BET_SIZE, bankroll)
+        size = max(minimum_size, min(size, config.MAX_BET_SIZE, bankroll))
         return size
 
     # ------------------------------------------------------------------
@@ -86,9 +88,8 @@ class RiskManager:
         # Daily loss limit (realized only)
         day_start = state.day_start_bankroll
         if day_start > 0:
-            open_cost = sum(p.get("cost_basis", 0) for p in state.open_positions.values())
-            realized_bankroll = state.current_bankroll + open_cost
-            daily_loss = (day_start - realized_bankroll) / day_start
+            equity = self._equity()
+            daily_loss = (day_start - equity) / day_start
             if daily_loss >= config.DAILY_LOSS_LIMIT_PCT:
                 return True, f"daily_loss_limit ({daily_loss:.1%})"
 
@@ -130,9 +131,8 @@ class RiskManager:
         # Daily loss limit — only count realized losses, not open position cost
         day_start = state.day_start_bankroll
         if day_start > 0:
-            open_cost = sum(p.get("cost_basis", 0) for p in state.open_positions.values())
-            realized_bankroll = bankroll + open_cost
-            daily_loss = (day_start - realized_bankroll) / day_start
+            equity = self._equity()
+            daily_loss = (day_start - equity) / day_start
             if daily_loss >= config.DAILY_LOSS_LIMIT_PCT:
                 return False, f"daily_loss_limit ({daily_loss:.1%})"
 
@@ -141,7 +141,8 @@ class RiskManager:
             p.get("cost_basis", 0)
             for p in state.open_positions.values()
         )
-        max_exposure = bankroll * (config.MAX_EXPOSURE_PCT / 100.0)
+        equity = self._equity()
+        max_exposure = equity * (config.MAX_EXPOSURE_PCT / 100.0)
         if (open_exposure + proposed_size) > max_exposure:
             return False, (
                 f"max_exposure_exceeded "
@@ -154,7 +155,7 @@ class RiskManager:
             for p in state.open_positions.values()
             if p.get("market_id") == opp.market_id
         )
-        max_concentration = bankroll * (config.MAX_MARKET_CONCENTRATION_PCT / 100.0)
+        max_concentration = equity * (config.MAX_MARKET_CONCENTRATION_PCT / 100.0)
         if (market_exposure + proposed_size) > max_concentration:
             return False, (
                 f"market_concentration_exceeded "
@@ -177,7 +178,13 @@ class RiskManager:
         peak = state.peak_bankroll
         if peak <= 0:
             return 0.0
-        return max(0.0, (peak - state.current_bankroll) / peak)
+        return max(0.0, (peak - self._equity()) / peak)
+
+    def _equity(self) -> float:
+        """Cash plus cost basis of open positions."""
+        state = self._portfolio.state
+        open_cost = sum(p.get("cost_basis", 0) for p in state.open_positions.values())
+        return state.current_bankroll + open_cost
 
     def _pause_expired(self) -> bool:
         """True if the consecutive-loss pause window has elapsed."""

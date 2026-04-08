@@ -219,6 +219,7 @@ def compute_orderbook_depth(asks: list, target_usd: float) -> tuple:
     Returns (0.0, 0.0) if the asks list is empty or all levels are invalid.
     """
     filled_usd = 0.0
+    filled_shares = 0.0
     cost = 0.0
     for level in asks:
         price = float(level.get("price", 0))
@@ -228,9 +229,10 @@ def compute_orderbook_depth(asks: list, target_usd: float) -> tuple:
         level_usd = price * size
         take_usd = min(level_usd, target_usd - filled_usd)
         cost += take_usd
+        filled_shares += take_usd / price
         filled_usd += take_usd
         if filled_usd >= target_usd:
             break
-    if filled_usd == 0:
+    if filled_usd == 0 or filled_shares == 0:
         return (0.0, 0.0)
-    return (cost / filled_usd, filled_usd)
+    return (cost / filled_shares, filled_usd)

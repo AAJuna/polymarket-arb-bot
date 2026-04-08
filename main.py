@@ -118,7 +118,7 @@ def _print_startup_summary(port: Portfolio) -> None:
         ["AI min edge", f"{config.AI_MIN_EDGE_PCT:.1f}%"],
         ["Min AI confidence", f"{config.MIN_AI_CONFIDENCE:.0%}"],
         ["AI paper mode", config.AI_PAPER_MODE if config.PAPER_TRADING else "gate"],
-        ["Strategies", f"same={config.ENABLE_SAME_MARKET_ARB} cross={config.ENABLE_CROSS_MARKET_ARB} odds={config.ENABLE_ODDS_COMPARISON_ARB}"],
+        ["Strategies", f"same={config.ENABLE_SAME_MARKET_ARB} same_exec={config.ENABLE_SAME_MARKET_EXECUTION} cross={config.ENABLE_CROSS_MARKET_ARB} odds={config.ENABLE_ODDS_COMPARISON_ARB}"],
         ["Bet size", f"{config.BET_SIZE_PCT:.1f}% of bankroll"],
         ["Max bet", f"${config.MAX_BET_SIZE:.2f}"],
         ["Poll interval", f"{config.POLL_INTERVAL}s"],
@@ -326,6 +326,8 @@ def run() -> None:
         cycle += 1
 
         try:
+            port.check_day_reset()
+
             # Check if trading is globally blocked before doing any API calls
             trading_blocked, block_reason = risk.is_globally_blocked()
 
@@ -365,15 +367,20 @@ def run() -> None:
                         p.get("market_id") for p in port.state.open_positions.values()
                     }
                 min_required_edge = max(config.MIN_EDGE_PCT, config.AI_MIN_EDGE_PCT)
+                executable_opportunities = [
+                    o for o in opportunities
+                    if o.type != "same_market" or config.ENABLE_SAME_MARKET_EXECUTION
+                ]
+                skipped_same_market_count = len(opportunities) - len(executable_opportunities)
                 skipped_open_count = sum(
-                    1 for o in opportunities if o.market_id in open_market_ids
+                    1 for o in executable_opportunities if o.market_id in open_market_ids
                 )
                 skipped_edge_count = sum(
-                    1 for o in opportunities if o.edge_pct < min_required_edge
+                    1 for o in executable_opportunities if o.edge_pct < min_required_edge
                 )
                 filtered = sorted(
                     [
-                        o for o in opportunities
+                        o for o in executable_opportunities
                         if o.edge_pct >= min_required_edge
                         and o.market_id not in open_market_ids
                     ],
@@ -451,7 +458,8 @@ def run() -> None:
                     skipped_closed_count = pre_verify_count - len(filtered)
                     logger.info(
                         "  no AI candidates after filters "
-                        f"(already_open={skipped_open_count}, "
+                        f"(same_market_exec_disabled={skipped_same_market_count}, "
+                        f"already_open={skipped_open_count}, "
                         f"below_edge={skipped_edge_count}, "
                         f"closed_or_inactive={skipped_closed_count})"
                     )

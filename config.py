@@ -106,6 +106,7 @@ MIN_VOLUME_24H: float = 500.0
 MIN_LIQUIDITY: float = 200.0
 MIN_HOURS_TO_EXPIRY: float = 2.0          # skip markets expiring in < 2 hours
 ENABLE_SAME_MARKET_ARB: bool = os.getenv("ENABLE_SAME_MARKET_ARB", "true").lower() == "true"
+ENABLE_SAME_MARKET_EXECUTION: bool = os.getenv("ENABLE_SAME_MARKET_EXECUTION", "false").lower() == "true"
 ENABLE_CROSS_MARKET_ARB: bool = os.getenv("ENABLE_CROSS_MARKET_ARB", "false").lower() == "true"
 ENABLE_ODDS_COMPARISON_ARB: bool = os.getenv("ENABLE_ODDS_COMPARISON_ARB", "true").lower() == "true"
 ODDS_COMPARISON_MONEYLINE_ONLY: bool = os.getenv("ODDS_COMPARISON_MONEYLINE_ONLY", "true").lower() == "true"
@@ -166,6 +167,8 @@ def validate() -> list[str]:
         issues.append("PAPER_TRADING=true — no real orders will be placed")
     if RESET_STATE_ON_START:
         issues.append("RESET_STATE_ON_START=true — persisted state will be cleared at startup")
+    if ENABLE_SAME_MARKET_ARB and not ENABLE_SAME_MARKET_EXECUTION:
+        issues.append("same-market arb detection enabled but execution disabled until bundle execution is atomic")
     if not PAPER_TRADING and AI_PAPER_MODE != "gate":
         issues.append("AI_PAPER_MODE is ignored in live mode — AI remains a hard gate")
     return issues

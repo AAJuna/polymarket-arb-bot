@@ -151,7 +151,7 @@ class Portfolio:
                 f"Portfolio loaded: bankroll=${self.state.current_bankroll:.2f} "
                 f"trades={self.state.total_trades}"
             )
-            self._check_day_reset()
+            self.check_day_reset()
             if migrated:
                 self.save()
             return True
@@ -604,6 +604,16 @@ class Portfolio:
         """Must be called inside self._lock."""
         if self.state.current_bankroll > self.state.peak_bankroll:
             self.state.peak_bankroll = self.state.current_bankroll
+
+    def check_day_reset(self):
+        today = utcnow().date().isoformat()
+        with self._lock:
+            if self.state.day_start_date != today:
+                self.state.day_start_date = today
+                open_cost = sum(p.get("cost_basis", 0) for p in self.state.open_positions.values())
+                equity = self.state.current_bankroll + open_cost
+                self.state.day_start_bankroll = equity
+                logger.info(f"New trading day — equity reset baseline: ${equity:.2f}")
 
     def _check_day_reset(self):
         today = utcnow().date().isoformat()

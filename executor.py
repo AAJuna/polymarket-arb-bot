@@ -207,22 +207,16 @@ class Executor:
                 neg_risk=True if plan["neg_risk"] else None,
             )
             signed = self._client.create_order(order_args, order_options)
-            resp = self._client.post_order(signed, OrderType.GTC)
+            # FOK keeps portfolio accounting honest: either the order fills now,
+            # or we do not record a position.
+            resp = self._client.post_order(signed, OrderType.FOK)
 
             if resp and resp.get("success"):
                 order_id = resp.get("orderID", str(uuid4()))
-                with self._lock:
-                    self._open_orders[order_id] = {
-                        "opportunity": opp,
-                        "placed_at": utcnow(),
-                        "size": plan["shares"],
-                        "price": plan["exec_price"],
-                        "token_id": opp.token_id,
-                    }
                 paired = getattr(opp, "paired_token_id", None)
                 bundle_note = f" [bundle→{paired[:8]}…]" if paired else ""
                 logger.info(
-                    f"Order placed: {order_id[:12]}… | "
+                    f"Order filled: {order_id[:12]}… | "
                     f"{opp.question[:40]} | {opp.side} | "
                     f"{plan['shares']:.4f} shares @ ${plan['exec_price']:.4f}{bundle_note}"
                 )
@@ -233,6 +227,7 @@ class Executor:
                     "fill_size": plan["shares"],
                     "fill_cost": plan["fill_cost"],
                     "simulated": False,
+                    "order_type": "FOK",
                 }
             else:
                 logger.warning(f"Order rejected for {opp.market_id}: {resp}")

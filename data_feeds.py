@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -23,6 +24,23 @@ _session = requests.Session()
 _session.headers.update({"Accept": "application/json"})
 
 _odds_cache = TTLCache(ttl_seconds=config.ODDS_CACHE_TTL)
+
+_GENERIC_TEAM_TOKENS = {
+    "a",
+    "ac",
+    "afc",
+    "bc",
+    "bk",
+    "cf",
+    "club",
+    "de",
+    "fc",
+    "fk",
+    "if",
+    "sc",
+    "the",
+    "uc",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +191,19 @@ def _parse_event(raw: dict, sport: str) -> Optional[ExternalOdds]:
 
 def _normalize(text: str) -> str:
     """Lowercase, strip punctuation, collapse whitespace."""
-    text = text.lower()
+    text = unicodedata.normalize("NFKD", text.lower())
+    text = text.encode("ascii", "ignore").decode("ascii")
     text = re.sub(r"[^a-z0-9 ]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _distinctive_tokens(text: str) -> set[str]:
+    """Return team tokens that are useful for fuzzy matching."""
+    return {
+        token
+        for token in _normalize(text).split()
+        if len(token) > 1 and token not in _GENERIC_TEAM_TOKENS
+    }
 
 
 def _make_event_key(home: str, away: str, dt: datetime) -> str:
@@ -185,7 +213,31 @@ def _make_event_key(home: str, away: str, dt: datetime) -> str:
     return f"{h}_vs_{a}_{d}"
 
 
-def get_odds_for_market(question: str, end_date: datetime) -> Optional[ExternalOdds]:
+def match_team_side(question: str, odds: ExternalOdds) -> Optional[str]:
+    """Return home/away/draw if the market question identifies one outcome."""
+    q_norm = _normalize(question)
+    q_tokens = _distinctive_tokens(question)
+
+    if "draw" in q_norm:
+        return "draw"
+
+    home_tokens = _distinctive_tokens(odds.home_team)
+    away_tokens = _distinctive_tokens(odds.away_team)
+    home_hit = bool(home_tokens and home_tokens <= q_tokens)
+    away_hit = bool(away_tokens and away_tokens <= q_tokens)
+
+    if home_hit and not away_hit:
+        return "home"
+    if away_hit and not home_hit:
+        return "away"
+    return None
+
+
+def get_odds_for_market(
+    question: str,
+    end_date: datetime,
+    context_text: str = "",
+) -> Optional[ExternalOdds]:
     """Fuzzy-match a Polymarket question to an ExternalOdds entry.
 
     Returns the best match (with match_confidence set) if:
@@ -197,22 +249,21 @@ def get_odds_for_market(question: str, end_date: datetime) -> Optional[ExternalO
     if not all_odds:
         return None
 
-    q_norm = _normalize(question)
+    match_text = f"{question} {context_text}".strip()
+    match_words = _distinctive_tokens(match_text)
     best: Optional[ExternalOdds] = None
     best_score = 0
     best_confidence = 0.0
 
     for odds in all_odds:
         # Check team names
-        home_norm = _normalize(odds.home_team)
-        away_norm = _normalize(odds.away_team)
+        home_words = _distinctive_tokens(odds.home_team)
+        away_words = _distinctive_tokens(odds.away_team)
+        if not home_words or not away_words:
+            continue
 
-        home_words = set(home_norm.split())
-        away_words = set(away_norm.split())
-        q_words = set(q_norm.split())
-
-        home_overlap = len(home_words & q_words)
-        away_overlap = len(away_words & q_words)
+        home_overlap = len(home_words & match_words)
+        away_overlap = len(away_words & match_words)
 
         if home_overlap == 0 or away_overlap == 0:
             continue
@@ -225,13 +276,16 @@ def get_odds_for_market(question: str, end_date: datetime) -> Optional[ExternalO
         score = home_overlap + away_overlap
 
         # Confidence score: token overlap ratio (70%) + time proximity (30%)
-        total_team_words = max(1, len(home_words | away_words))
-        token_ratio = min(1.0, (home_overlap + away_overlap) / total_team_words)
+        home_ratio = home_overlap / max(1, len(home_words))
+        away_ratio = away_overlap / max(1, len(away_words))
+        token_ratio = min(home_ratio, away_ratio)
         hours_diff = time_diff / 3600.0
         time_proximity = max(0.0, 1.0 - hours_diff / 24.0)
         confidence = token_ratio * 0.7 + time_proximity * 0.3
 
-        if score > best_score:
+        if confidence > best_confidence or (
+            abs(confidence - best_confidence) < 1e-9 and score > best_score
+        ):
             best_score = score
             best_confidence = confidence
             best = odds
