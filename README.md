@@ -3,6 +3,7 @@
 [![CI](https://github.com/AAJuna/polymarket-arb-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/AAJuna/polymarket-arb-bot/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![Mode](https://img.shields.io/badge/default-paper%20trading-1f883d)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Opinionated Polymarket sports trading bot focused on paper-first execution, risk controls, and observable performance.
 
@@ -83,6 +84,12 @@ The dashboard reads runtime state from `data/` and shows:
 - Do not switch to live trading before validating expectancy after fees, spread, slippage, and missed fills.
 - Keep `PAPER_TRADING=true` until your shadow report and resolved-trade data justify otherwise.
 
+## Contributing
+
+Open an issue before large changes. Keep patches narrow, explain the behavioral impact, and include a quick verification note.
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the expected workflow.
+
 ## License
 
-No license has been added yet. If you want outside contributions, add one before promoting the repo publicly.
+This project is available under the [`MIT License`](LICENSE).
