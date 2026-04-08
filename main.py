@@ -26,6 +26,7 @@ from logger_setup import setup_logging, get_logger
 from maintenance import reset_runtime_state
 from portfolio import Portfolio
 from risk_manager import RiskManager
+from shadow_tracker import ShadowTracker
 from tabulate import tabulate
 
 logger = get_logger(__name__)
@@ -278,8 +279,10 @@ def run() -> None:
     exec_ = Executor()
     comp = Compounder()
     risk = RiskManager(port)
+    shadow = ShadowTracker()
 
     startup_checks(port, exec_, ai)
+    shadow.save()
     live_account_address = exec_.get_account_address() if not config.PAPER_TRADING else None
 
     running = True
@@ -336,6 +339,7 @@ def run() -> None:
                 port.check_resolutions()
                 open_after = len(port.state.open_positions)
                 closed_count = open_before - open_after
+                shadow.resolve_signals()
 
                 if closed_count > 0:
                     # A position resolved — re-evaluate, may allow new entries
@@ -359,6 +363,9 @@ def run() -> None:
 
                 # 2. Detect arbitrage opportunities
                 opportunities = arbitrage.find_opportunities(markets)
+                new_shadow_signals = shadow.track_opportunities(opportunities)
+                if new_shadow_signals:
+                    logger.info(f"  shadow tracker recorded {new_shadow_signals} new signal(s)")
 
                 # 3. Pre-filter — skip markets already open, apply edge threshold
                 #    Cap at top 5 by edge score to limit AI token spend
@@ -495,6 +502,7 @@ def run() -> None:
 
                 # 6. Check resolved markets
                 port.check_resolutions()
+                shadow.resolve_signals()
 
             # 7. Periodic bankroll sync (every ~60 seconds)
             bankroll_sync_counter += 1
@@ -509,10 +517,12 @@ def run() -> None:
             # 8. Status log (every ~60 seconds)
             if cycle % max(1, 60 // config.POLL_INTERVAL) == 0:
                 port.log_status()
+                shadow.log_summary()
                 ai.log_usage()
 
             # 9. Periodic save
             port.maybe_save()
+            shadow.maybe_save()
 
         except Exception as e:
             logger.error(f"Main loop error (cycle {cycle}): {e}", exc_info=True)
@@ -526,6 +536,7 @@ def run() -> None:
     # Graceful shutdown
     logger.info("Shutting down...")
     port.save()
+    shadow.save()
     exec_.cancel_all()
     port.log_status()
     logger.info("Bot stopped cleanly.")

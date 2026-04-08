@@ -13,6 +13,9 @@ LOGS_DIR = Path("logs")
 STATE_FILES = (
     DATA_DIR / "portfolio.json",
     DATA_DIR / "ai_stats.json",
+    DATA_DIR / "shadow_signals.json",
+    DATA_DIR / "shadow_report.json",
+    DATA_DIR / "strategy_expectancy.json",
 )
 
 LOG_PATTERNS = (

@@ -9,6 +9,7 @@ import atexit
 import json
 import threading
 import time
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ logger = get_logger(__name__)
 
 DATA_DIR = Path("data")
 PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
+STRATEGY_REPORT_FILE = DATA_DIR / "strategy_expectancy.json"
 _data_api_session = requests.Session()
 _data_api_session.headers.update({"Accept": "application/json"})
 
@@ -95,6 +97,10 @@ class Position:
     market_slug: str = ""
     market_url: str = ""
     end_date: str = ""
+    strategy_type: str = ""
+    confidence_source: str = ""
+    signal_edge_pct: float = 0.0
+    ai_confidence: Optional[float] = None
 
 
 @dataclass
@@ -283,6 +289,7 @@ class Portfolio:
                 data = asdict(self.state)
             with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, default=str)
+            self._write_strategy_report()
             logger.debug("Portfolio saved")
             self._last_save = time.monotonic()
         except Exception as e:
@@ -319,6 +326,10 @@ class Portfolio:
             market_slug=getattr(opp, "market_slug", ""),
             market_url=getattr(opp, "market_url", ""),
             end_date=opp.end_date.isoformat() if getattr(opp, "end_date", None) else "",
+            strategy_type=getattr(opp, "type", ""),
+            confidence_source=getattr(opp, "confidence_source", ""),
+            signal_edge_pct=float(getattr(opp, "edge_pct", 0.0) or 0.0),
+            ai_confidence=(float(getattr(analysis, "confidence", 0.0)) if analysis is not None else None),
         )
 
         with self._lock:
@@ -541,6 +552,33 @@ class Portfolio:
     # Metrics
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _strategy_metrics(positions: list[Position]) -> dict:
+        pnls = [p.pnl for p in positions if p.pnl is not None]
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        gross_profit = sum(wins) if wins else 0.0
+        gross_loss = abs(sum(losses)) if losses else 0.0
+        avg_edge = (
+            sum(p.signal_edge_pct for p in positions) / len(positions)
+            if positions else 0.0
+        )
+        avg_ai_conf = (
+            sum(p.ai_confidence for p in positions if p.ai_confidence is not None)
+            / max(1, len([p for p in positions if p.ai_confidence is not None]))
+            if positions else 0.0
+        )
+        return {
+            "trades": len(positions),
+            "resolved_trades": len(pnls),
+            "win_rate": len(wins) / len(pnls) * 100 if pnls else 0.0,
+            "total_pnl": sum(pnls),
+            "avg_pnl": sum(pnls) / len(pnls) if pnls else 0.0,
+            "avg_edge_pct": avg_edge,
+            "avg_ai_confidence": avg_ai_conf,
+            "profit_factor": gross_profit / gross_loss if gross_loss > 0 else float("inf"),
+        }
+
     def compute_metrics(self) -> dict:
         with self._lock:
             history = [Position(**p) for p in self.state.trade_history]
@@ -557,6 +595,10 @@ class Portfolio:
         gross_profit = sum(wins) if wins else 0.0
         gross_loss = abs(sum(losses)) if losses else 0.0
 
+        by_strategy_positions: dict[str, list[Position]] = defaultdict(list)
+        for pos in history:
+            by_strategy_positions[pos.strategy_type or "unknown"].append(pos)
+
         return {
             "total_trades": len(history),
             "win_rate": len(wins) / len(pnls) * 100 if pnls else 0,
@@ -569,7 +611,28 @@ class Portfolio:
             "open_positions": len(self.state.open_positions),
             "consecutive_wins": self.state.consecutive_wins,
             "consecutive_losses": self.state.consecutive_losses,
+            "by_strategy": {
+                strategy: self._strategy_metrics(positions)
+                for strategy, positions in sorted(by_strategy_positions.items())
+            },
         }
+
+    def _write_strategy_report(self) -> None:
+        metrics = self.compute_metrics()
+        report = {
+            "updated_at": utcnow().isoformat(),
+            "mode": "paper" if config.PAPER_TRADING else "live",
+            "total_trades": metrics.get("total_trades", 0),
+            "overall": {
+                "win_rate": metrics.get("win_rate", 0.0),
+                "total_pnl": metrics.get("total_pnl", 0.0),
+                "profit_factor": metrics.get("profit_factor", 0.0),
+                "roi_pct": metrics.get("roi_pct", 0.0),
+            },
+            "by_strategy": metrics.get("by_strategy", {}),
+        }
+        with open(STRATEGY_REPORT_FILE, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, default=str)
 
     def log_status(self) -> None:
         m = self.compute_metrics()

@@ -17,6 +17,8 @@ from utils import format_time_remaining, parse_iso, seconds_until
 
 PORTFOLIO_FILE = Path("data/portfolio.json")
 AI_STATS_FILE  = Path("data/ai_stats.json")
+SHADOW_REPORT_FILE = Path("data/shadow_report.json")
+STRATEGY_REPORT_FILE = Path("data/strategy_expectancy.json")
 REFRESH_SECONDS = 10
 
 
@@ -231,6 +233,16 @@ def load_ai_stats() -> dict:
         return {}
 
 
+def load_json_file(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def load_portfolio() -> dict | None:
     if not PORTFOLIO_FILE.exists():
         return None
@@ -292,6 +304,8 @@ def drawdown_pct(data: dict) -> float:
 # ---------------------------------------------------------------------------
 
 data = load_portfolio()
+shadow_report = load_json_file(SHADOW_REPORT_FILE)
+strategy_report = load_json_file(STRATEGY_REPORT_FILE)
 
 # ---------------------------------------------------------------------------
 # Header
@@ -577,6 +591,78 @@ if history:
     )
 else:
     st.markdown('<div style="color:#6c7086;font-size:0.8rem;padding:12px 0">No closed trades yet</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Strategy Expectancy
+# ---------------------------------------------------------------------------
+
+st.markdown('<div class="section-hdr">Strategy Expectancy</div>', unsafe_allow_html=True)
+
+strategy_rows = []
+for strategy, summary in (strategy_report.get("by_strategy") or {}).items():
+    strategy_rows.append({
+        "Strategy": strategy,
+        "Trades": summary.get("trades", 0),
+        "Resolved": summary.get("resolved_trades", 0),
+        "Win Rate": f"{summary.get('win_rate', 0.0):.1f}%",
+        "Avg P&L": f"{summary.get('avg_pnl', 0.0):+.2f}",
+        "Total P&L": f"{summary.get('total_pnl', 0.0):+.2f}",
+        "Avg Edge": f"{summary.get('avg_edge_pct', 0.0):.1f}%",
+        "Avg AI": f"{summary.get('avg_ai_confidence', 0.0):.2f}" if summary.get("avg_ai_confidence", 0.0) else "—",
+    })
+
+if strategy_rows:
+    st.dataframe(pd.DataFrame(strategy_rows), use_container_width=True, hide_index=True)
+else:
+    st.markdown('<div style="color:#6c7086;font-size:0.8rem;padding:12px 0">No resolved trades by strategy yet</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Shadow Fill Report
+# ---------------------------------------------------------------------------
+
+st.markdown('<div class="section-hdr">Shadow Fill Report</div>', unsafe_allow_html=True)
+
+shadow_rows = []
+for strategy, summary in (shadow_report.get("by_strategy") or {}).items():
+    shadow_rows.append({
+        "Strategy": strategy,
+        "Signals": summary.get("signals", 0),
+        "Resolved": summary.get("resolved_signals", 0),
+        "Open": summary.get("open_signals", 0),
+        "Win Rate": f"{summary.get('win_rate', 0.0):.1f}%",
+        "Exp / $1": f"{summary.get('avg_pnl_per_dollar', 0.0):+.3f}",
+        "Avg Edge": f"{summary.get('avg_first_edge_pct', 0.0):.1f}%",
+        "Max Edge": f"{summary.get('avg_max_edge_pct', 0.0):.1f}%",
+    })
+
+if shadow_rows:
+    st.dataframe(pd.DataFrame(shadow_rows), use_container_width=True, hide_index=True)
+else:
+    st.markdown('<div style="color:#6c7086;font-size:0.8rem;padding:12px 0">No shadow signals recorded yet</div>', unsafe_allow_html=True)
+
+recent_shadow = shadow_report.get("recent_resolved") or []
+if recent_shadow:
+    recent_rows = []
+    for item in recent_shadow:
+        recent_rows.append({
+            "Strategy": item.get("strategy_type", ""),
+            "Market": str(item.get("question", ""))[:60],
+            "P&L / $1": f"{float(item.get('pnl_per_dollar', 0.0)):+.3f}",
+            "Resolved": item.get("resolved_at", ""),
+            "Link": item.get("market_url", ""),
+        })
+    st.dataframe(
+        pd.DataFrame(recent_rows),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Link": st.column_config.LinkColumn("Link", display_text="↗ View"),
+        },
+    )
 
 st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
 
