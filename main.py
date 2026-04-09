@@ -30,6 +30,7 @@ from shadow_tracker import ShadowTracker
 from tabulate import tabulate
 
 logger = get_logger(__name__)
+EXECUTION_VERIFY_MAX_AGE_SECONDS = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +404,7 @@ def run() -> None:
                 for opp in ranked_candidates:
                     if len(filtered) >= ai_scan_limit:
                         break
+                    verified_at = time.monotonic()
                     is_open, _, reason = scanner.verify_market_open(opp.condition_id, opp.question)
                     if not is_open:
                         skipped_closed_count += 1
@@ -411,7 +413,7 @@ def run() -> None:
                             f"({reason}) | {opp.question[:50]}"
                         )
                         continue
-                    filtered.append(opp)
+                    filtered.append((opp, verified_at))
 
                 logger.info(
                     f"━━ CYCLE {cycle:>4} ━━ "
@@ -426,7 +428,7 @@ def run() -> None:
                 validated = []
                 ai_pass_count = 0
                 advisory_override_count = 0
-                for opp in filtered:
+                for opp, verified_at in filtered:
                     if len(validated) >= config.AI_MAX_CANDIDATES:
                         break
                     analysis = ai.analyze(opp)
@@ -446,7 +448,7 @@ def run() -> None:
 
                     if analysis.is_valid and analysis.recommended_side == opp.side:
                         ai_pass_count += 1
-                        validated.append((opp, analysis))
+                        validated.append((opp, analysis, verified_at))
                     elif config.PAPER_TRADING and config.AI_PAPER_MODE == "advisory":
                         advisory_override_count += 1
                         logger.info(
@@ -454,7 +456,7 @@ def run() -> None:
                             f"(ai_side={analysis.recommended_side}, "
                             f"edge={analysis.edge_detected}, conf={analysis.confidence:.2f})"
                         )
-                        validated.append((opp, analysis))
+                        validated.append((opp, analysis, verified_at))
                     elif analysis.is_valid:
                         logger.info(
                             f"  skipped AI side mismatch for {opp.market_id} "
@@ -481,7 +483,7 @@ def run() -> None:
 
                 # 5. Execute
                 trades_placed = 0
-                for opp, analysis in validated:
+                for opp, analysis, verified_at in validated:
                     size = risk.get_position_size(comp.current_bet_pct)
                     allowed, reason = risk.can_trade(opp, size)
 
@@ -489,12 +491,14 @@ def run() -> None:
                         logger.info(f"  blocked ({reason})")
                         continue
 
-                    is_open, _, status_reason = scanner.verify_market_open(opp.condition_id, opp.question)
-                    if not is_open:
-                        logger.info(
-                            f"  blocked (market_{status_reason}) | {opp.question[:50]}"
-                        )
-                        continue
+                    verify_age = time.monotonic() - verified_at
+                    if verify_age > EXECUTION_VERIFY_MAX_AGE_SECONDS:
+                        is_open, _, status_reason = scanner.verify_market_open(opp.condition_id, opp.question)
+                        if not is_open:
+                            logger.info(
+                                f"  blocked (market_{status_reason}) | {opp.question[:50]}"
+                            )
+                            continue
 
                     result = exec_.place_order(opp, size)
                     if result and result.get("success"):

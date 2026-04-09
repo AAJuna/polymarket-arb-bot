@@ -11,6 +11,7 @@ prompt_polymarket_bot.md
 # Bot state & logs
 data/
 logs/
+backups/
 
 # Python
 __pycache__/

@@ -6,6 +6,7 @@ Rate-limited to 30 calls/min, results cached per market for 3 minutes.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -14,7 +15,7 @@ import anthropic
 
 import config
 from logger_setup import get_logger
-from utils import RateLimiter, TTLCache
+from utils import RateLimiter, TTLCache, utcnow
 
 AI_STATS_FILE = Path("data/ai_stats.json")
 
@@ -97,30 +98,40 @@ class AIAnalyzer:
         if not AI_STATS_FILE.exists():
             return
         try:
-            with open(AI_STATS_FILE, "r") as f:
+            with open(AI_STATS_FILE, "r", encoding="utf-8") as f:
                 s = json.load(f)
             self._total_calls = s.get("total_calls", 0)
             self._total_input_tokens = s.get("total_input_tokens", 0)
             self._total_output_tokens = s.get("total_output_tokens", 0)
             self._estimated_cost_usd = s.get("estimated_cost_usd", 0.0)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(f"Failed to load AI stats from disk: {exc}")
 
     def _save_stats(self) -> None:
         """Persist stats to disk."""
+        tmp_path = AI_STATS_FILE.with_suffix(".json.tmp")
         try:
             AI_STATS_FILE.parent.mkdir(exist_ok=True)
-            with open(AI_STATS_FILE, "w") as f:
-                json.dump({
-                    "total_calls": self._total_calls,
-                    "total_input_tokens": self._total_input_tokens,
-                    "total_output_tokens": self._total_output_tokens,
-                    "estimated_cost_usd": self._estimated_cost_usd,
-                    "model": config.AI_MODEL,
-                    "updated_at": __import__("datetime").datetime.utcnow().isoformat(),
-                }, f, indent=2)
-        except Exception:
-            pass
+            payload = {
+                "total_calls": self._total_calls,
+                "total_input_tokens": self._total_input_tokens,
+                "total_output_tokens": self._total_output_tokens,
+                "estimated_cost_usd": self._estimated_cost_usd,
+                "model": config.AI_MODEL,
+                "updated_at": utcnow().isoformat(),
+            }
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, AI_STATS_FILE)
+        except Exception as exc:
+            logger.error(f"Failed to persist AI stats: {exc}")
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
     def analyze(self, opp: "Opportunity") -> Optional[AIAnalysis]:
         """Analyze an opportunity. Returns None on failure or if API key missing."""
