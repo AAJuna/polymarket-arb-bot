@@ -582,6 +582,9 @@ def scan_sports_markets() -> list[MarketData]:
 
 def get_market_status(condition_id: str) -> dict:
     """Fetch resolution status for a specific market."""
+    if not condition_id:
+        return {}
+
     cached = _market_status_cache.get(condition_id)
     if cached is not None:
         return cached

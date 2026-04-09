@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
+import shutil
 import threading
 import time
 from collections import defaultdict
@@ -25,7 +27,9 @@ logger = get_logger(__name__)
 
 DATA_DIR = Path("data")
 PORTFOLIO_FILE = DATA_DIR / "portfolio.json"
+PORTFOLIO_BACKUP_FILE = DATA_DIR / "portfolio.json.bak"
 STRATEGY_REPORT_FILE = DATA_DIR / "strategy_expectancy.json"
+TRADE_LEDGER_FILE = DATA_DIR / "trade_ledger.jsonl"
 _data_api_session = requests.Session()
 _data_api_session.headers.update({"Accept": "application/json"})
 
@@ -140,30 +144,124 @@ class Portfolio:
     def load(self) -> bool:
         """Load state from disk. Returns True if successful."""
         if not PORTFOLIO_FILE.exists():
+            if self._load_backup():
+                return True
+            if self._recover_from_trade_ledger():
+                return True
             logger.info("No portfolio file found — starting fresh")
             self._init_fresh()
             return False
 
         try:
-            with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            with self._lock:
-                self.state = PortfolioState(**{
-                    k: v for k, v in data.items()
-                    if k in PortfolioState.__dataclass_fields__
-                })
-            migrated = self._normalize_loaded_positions()
-            logger.info(
-                f"Portfolio loaded: bankroll=${self.state.current_bankroll:.2f} "
-                f"trades={self.state.total_trades}"
-            )
-            self.check_day_reset()
-            if migrated:
-                self.save()
+            migrated = self._load_from_path(PORTFOLIO_FILE, source="primary")
             return True
         except Exception as e:
-            logger.error(f"Portfolio file corrupted: {e} — starting fresh")
+            logger.error(f"Portfolio file corrupted: {e} — attempting recovery")
+            if self._load_backup():
+                return True
+            if self._recover_from_trade_ledger():
+                return True
             self._init_fresh()
+            return False
+
+    def _load_from_path(self, path: Path, source: str) -> bool:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        with self._lock:
+            self.state = PortfolioState(**{
+                k: v for k, v in data.items()
+                if k in PortfolioState.__dataclass_fields__
+            })
+        migrated = self._normalize_loaded_positions()
+        logger.info(
+            f"Portfolio loaded ({source}): bankroll=${self.state.current_bankroll:.2f} "
+            f"trades={self.state.total_trades}"
+        )
+        self.check_day_reset()
+        if migrated:
+            self.save()
+        return True
+
+    def _load_backup(self) -> bool:
+        if not PORTFOLIO_BACKUP_FILE.exists():
+            return False
+        try:
+            self._load_from_path(PORTFOLIO_BACKUP_FILE, source="backup")
+            logger.warning("Recovered portfolio from backup snapshot")
+            return True
+        except Exception as exc:
+            logger.error(f"Portfolio backup recovery failed: {exc}")
+            return False
+
+    def _recover_from_trade_ledger(self) -> bool:
+        if not TRADE_LEDGER_FILE.exists():
+            return False
+
+        state = PortfolioState()
+        recovered = False
+
+        try:
+            with open(TRADE_LEDGER_FILE, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    position = event.get("position")
+                    if not isinstance(position, dict):
+                        continue
+
+                    recovered = True
+                    if not state.day_start_date:
+                        state.day_start_date = str(
+                            event.get("day_start_date") or utcnow().date().isoformat()
+                        )
+                    state.starting_bankroll = float(
+                        event.get("starting_bankroll", state.starting_bankroll or self._starting_bankroll)
+                    )
+                    state.day_start_bankroll = float(
+                        event.get("day_start_bankroll", state.day_start_bankroll or state.starting_bankroll)
+                    )
+                    state.current_bankroll = float(
+                        event.get("current_bankroll_after", state.current_bankroll)
+                    )
+                    state.peak_bankroll = max(
+                        state.peak_bankroll,
+                        float(event.get("peak_bankroll_after", state.current_bankroll)),
+                    )
+                    state.total_trades = int(event.get("total_trades", state.total_trades))
+                    state.winning_trades = int(event.get("winning_trades", state.winning_trades))
+                    state.consecutive_wins = int(
+                        event.get("consecutive_wins", state.consecutive_wins)
+                    )
+                    state.consecutive_losses = int(
+                        event.get("consecutive_losses", state.consecutive_losses)
+                    )
+
+                    position_id = str(position.get("position_id", "") or "")
+                    if not position_id:
+                        continue
+
+                    event_type = str(event.get("event", "") or "").lower()
+                    if event_type == "open":
+                        state.open_positions[position_id] = position
+                    elif event_type == "close":
+                        state.open_positions.pop(position_id, None)
+                        state.trade_history.append(position)
+
+            if not recovered:
+                return False
+
+            with self._lock:
+                self.state = state
+            logger.warning(
+                f"Recovered portfolio from trade ledger: open={len(self.state.open_positions)} "
+                f"closed={len(self.state.trade_history)}"
+            )
+            self.save()
+            return True
+        except Exception as exc:
+            logger.error(f"Trade ledger recovery failed: {exc}")
             return False
 
     def _normalize_loaded_positions(self) -> bool:
@@ -283,17 +381,33 @@ class Portfolio:
 
     def save(self) -> None:
         """Persist state to disk."""
+        tmp_path = PORTFOLIO_FILE.with_suffix(".json.tmp")
         try:
             DATA_DIR.mkdir(exist_ok=True)
             with self._lock:
                 data = asdict(self.state)
-            with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
+
+            if PORTFOLIO_FILE.exists():
+                try:
+                    shutil.copy2(PORTFOLIO_FILE, PORTFOLIO_BACKUP_FILE)
+                except Exception as exc:
+                    logger.warning(f"Failed to refresh portfolio backup: {exc}")
+
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, default=str)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, PORTFOLIO_FILE)
             self._write_strategy_report()
             logger.debug("Portfolio saved")
             self._last_save = time.monotonic()
         except Exception as e:
             logger.error(f"Failed to save portfolio: {e}")
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
     def maybe_save(self) -> None:
         """Save if the save interval has elapsed."""
@@ -344,6 +458,7 @@ class Portfolio:
             f"size={pos.size:.2f} @ ${pos.entry_price:.3f} | "
             f"cost=${pos.cost_basis:.2f} | edge={opp.edge_pct:.1f}%{ai_conf}"
         )
+        self._append_trade_ledger("open", pos)
         self.save()
         return pos
 
@@ -392,8 +507,33 @@ class Portfolio:
             f"{resolution} | "
             f"pnl=${pnl:+.2f} | bankroll=${self.state.current_bankroll:.2f}"
         )
+        self._append_trade_ledger("close", pos)
         self.save()
         return pnl
+
+    def _append_trade_ledger(self, event_type: str, pos: Position) -> None:
+        """Append a recovery-friendly trade event with full position data."""
+        try:
+            DATA_DIR.mkdir(exist_ok=True)
+            with self._lock:
+                payload = {
+                    "event": event_type,
+                    "timestamp": utcnow().isoformat(),
+                    "position": asdict(pos),
+                    "starting_bankroll": self.state.starting_bankroll,
+                    "day_start_bankroll": self.state.day_start_bankroll,
+                    "day_start_date": self.state.day_start_date,
+                    "current_bankroll_after": self.state.current_bankroll,
+                    "peak_bankroll_after": self.state.peak_bankroll,
+                    "total_trades": self.state.total_trades,
+                    "winning_trades": self.state.winning_trades,
+                    "consecutive_wins": self.state.consecutive_wins,
+                    "consecutive_losses": self.state.consecutive_losses,
+                }
+            with open(TRADE_LEDGER_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, default=str) + "\n")
+        except Exception as exc:
+            logger.error(f"Failed to append trade ledger event: {exc}")
 
     # ------------------------------------------------------------------
     # Resolution checking
