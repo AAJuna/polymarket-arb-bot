@@ -19,6 +19,7 @@ import config
 import data_feeds
 from data_feeds import ExternalOdds
 from logger_setup import get_logger
+from realtime_feed import get_shared_feed
 from scanner import MarketData
 from utils import TTLCache, compute_orderbook_depth, fee_adjusted_cost, retry, utcnow
 
@@ -136,9 +137,42 @@ class Opportunity:
 # Orderbook fetcher
 # ---------------------------------------------------------------------------
 
+def _apply_realtime_quote(token_id: str, include_asks: bool = True) -> Optional[float]:
+    """Populate local caches from the shared realtime feed when possible."""
+    feed = get_shared_feed()
+    best_ask = feed.get_best_ask(token_id)
+    if best_ask is None:
+        return None
+
+    _book_cache.set(token_id, best_ask)
+    _price_timestamps[token_id] = max(
+        _price_timestamps.get(token_id, 0.0),
+        feed.get_quote_updated_monotonic(token_id),
+    )
+
+    if include_asks:
+        asks = feed.get_orderbook_asks(token_id)
+        if asks:
+            _book_asks_cache[token_id] = asks
+
+    return best_ask
+
+
+def _get_cached_best_ask(token_id: str) -> Optional[float]:
+    """Return best ask from realtime/local cache only, without HTTP fallback."""
+    realtime_best_ask = _apply_realtime_quote(token_id, include_asks=False)
+    if realtime_best_ask is not None:
+        return realtime_best_ask
+    return _book_cache.get(token_id)
+
+
 @retry(max_attempts=2, base_delay=0.5, exceptions=(requests.RequestException,))
 def _get_best_ask(token_id: str) -> Optional[float]:
     """Return the best ask price for a token from the CLOB orderbook."""
+    realtime_best_ask = _apply_realtime_quote(token_id)
+    if realtime_best_ask is not None:
+        return realtime_best_ask
+
     cached = _book_cache.get(token_id)
     if cached is not None:
         return cached
@@ -162,6 +196,14 @@ def _get_best_ask(token_id: str) -> Optional[float]:
 
 def _get_orderbook_asks(token_id: str) -> list:
     """Return the cached full asks list for a token (populated by _get_best_ask)."""
+    realtime_asks = get_shared_feed().get_orderbook_asks(token_id)
+    if realtime_asks:
+        _book_asks_cache[token_id] = realtime_asks
+        _price_timestamps[token_id] = max(
+            _price_timestamps.get(token_id, 0.0),
+            get_shared_feed().get_quote_updated_monotonic(token_id),
+        )
+        return realtime_asks
     return _book_asks_cache.get(token_id, [])
 
 
@@ -492,14 +534,15 @@ def _find_odds_comparison_opportunities_legacy(markets: list[MarketData]) -> lis
         if sportsbook_prob is None:
             continue
 
-        edge_pct = (sportsbook_prob - m.yes_price) * 100
+        reference_yes_price = _get_cached_best_ask(m.yes_token_id) or m.yes_price
+        edge_pct = (sportsbook_prob - reference_yes_price) * 100
 
         if edge_pct < config.MIN_EDGE_PCT:
             continue
 
         logger.debug(
             f"Odds arb: {m.question[:50]} | "
-            f"polymarket={m.yes_price:.3f} sportsbook={sportsbook_prob:.3f} edge={edge_pct:.1f}%"
+            f"polymarket={reference_yes_price:.3f} sportsbook={sportsbook_prob:.3f} edge={edge_pct:.1f}%"
         )
 
         opps.append(Opportunity(
@@ -508,10 +551,10 @@ def _find_odds_comparison_opportunities_legacy(markets: list[MarketData]) -> lis
             condition_id=m.condition_id,
             token_id=m.yes_token_id,
             side="YES",
-            price=m.yes_price,
+            price=reference_yes_price,
             edge_pct=edge_pct,
             confidence_source="odds_comparison",
-            yes_price=m.yes_price,
+            yes_price=reference_yes_price,
             no_price=m.no_price,
             question=m.question,
             end_date=m.end_date,
@@ -569,7 +612,8 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             stats[side_reason] += 1
             continue
 
-        edge_pct = (sportsbook_prob - m.yes_price) * 100
+        reference_yes_price = _get_cached_best_ask(m.yes_token_id) or m.yes_price
+        edge_pct = (sportsbook_prob - reference_yes_price) * 100
         if edge_pct < config.MIN_EDGE_PCT:
             stats["below_edge"] += 1
             continue
@@ -577,7 +621,7 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
         stats["emitted"] += 1
         logger.debug(
             f"Odds arb: {m.question[:50]} | "
-            f"polymarket={m.yes_price:.3f} sportsbook={sportsbook_prob:.3f} edge={edge_pct:.1f}%"
+            f"polymarket={reference_yes_price:.3f} sportsbook={sportsbook_prob:.3f} edge={edge_pct:.1f}%"
         )
 
         opps.append(Opportunity(
@@ -586,10 +630,10 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             condition_id=m.condition_id,
             token_id=m.yes_token_id,
             side="YES",
-            price=m.yes_price,
+            price=reference_yes_price,
             edge_pct=edge_pct,
             confidence_source="odds_comparison",
-            yes_price=m.yes_price,
+            yes_price=reference_yes_price,
             no_price=m.no_price,
             question=m.question,
             end_date=m.end_date,

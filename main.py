@@ -25,6 +25,7 @@ from executor import Executor
 from logger_setup import setup_logging, get_logger
 from maintenance import reset_runtime_state
 from portfolio import Portfolio
+from realtime_feed import get_shared_feed
 from risk_manager import RiskManager
 from risk_events import RiskEventJournal
 from shadow_tracker import ShadowTracker
@@ -126,6 +127,15 @@ def _print_startup_summary(port: Portfolio) -> None:
         ["Bet size", f"{config.BET_SIZE_PCT:.1f}% of bankroll"],
         ["Max bet", f"${config.MAX_BET_SIZE:.2f}"],
         ["Poll interval", f"{config.POLL_INTERVAL}s"],
+        [
+            "Realtime feed",
+            (
+                f"on ({config.REALTIME_MARKET_WS_MAX_ASSETS} assets, "
+                f"{config.REALTIME_MARKET_WS_MAX_HOURS_TO_EXPIRY:.0f}h window)"
+                if config.REALTIME_MARKET_WS_ENABLED
+                else "off"
+            ),
+        ],
     ]
     print(tabulate(rows, tablefmt="simple"))
 
@@ -282,10 +292,12 @@ def run() -> None:
     exec_ = Executor()
     comp = Compounder()
     risk = RiskManager(port)
+    realtime = get_shared_feed()
     risk_journal = RiskEventJournal()
     shadow = ShadowTracker()
 
     startup_checks(port, exec_, ai)
+    realtime.start()
     shadow.save()
     live_account_address = exec_.get_account_address() if not config.PAPER_TRADING else None
 
@@ -344,6 +356,9 @@ def run() -> None:
                 open_after = len(port.state.open_positions)
                 closed_count = open_before - open_after
                 shadow.resolve_signals()
+                with port._lock:
+                    blocked_positions = [dict(p) for p in port.state.open_positions.values()]
+                realtime.refresh_watchlist(open_positions=blocked_positions)
 
                 if closed_count > 0:
                     # A position resolved — re-evaluate, may allow new entries
@@ -375,6 +390,9 @@ def run() -> None:
             if not trading_blocked:
                 # 1. Scan markets
                 markets = scanner.scan_sports_markets()
+                with port._lock:
+                    open_positions_snapshot = [dict(p) for p in port.state.open_positions.values()]
+                realtime.refresh_watchlist(markets=markets, open_positions=open_positions_snapshot)
 
                 # 2. Detect arbitrage opportunities
                 opportunities = arbitrage.find_opportunities(markets)
@@ -387,7 +405,7 @@ def run() -> None:
                 #    starve the rest of the opportunity set every cycle.
                 with port._lock:
                     open_market_ids = {
-                        p.get("market_id") for p in port.state.open_positions.values()
+                        p.get("market_id") for p in open_positions_snapshot
                     }
                 min_required_edge = max(config.MIN_EDGE_PCT, config.AI_MIN_EDGE_PCT)
                 executable_opportunities = [
@@ -650,6 +668,7 @@ def run() -> None:
                 port.log_status()
                 shadow.log_summary()
                 ai.log_usage()
+                realtime.log_status()
 
             # 9. Periodic save
             port.maybe_save()
@@ -666,6 +685,7 @@ def run() -> None:
 
     # Graceful shutdown
     logger.info("Shutting down...")
+    realtime.stop()
     port.save()
     shadow.save()
     exec_.cancel_all()

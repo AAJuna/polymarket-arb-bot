@@ -131,6 +131,21 @@ PAPER_TRADING: bool = os.getenv("PAPER_TRADING", "true").lower() == "true"
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 RESET_STATE_ON_START: bool = os.getenv("RESET_STATE_ON_START", "false").lower() == "true"
 RESET_LOGS_ON_START: bool = os.getenv("RESET_LOGS_ON_START", "true").lower() == "true"
+REALTIME_MARKET_WS_ENABLED: bool = os.getenv("REALTIME_MARKET_WS_ENABLED", "true").lower() == "true"
+REALTIME_MARKET_WS_URL: str = os.getenv(
+    "REALTIME_MARKET_WS_URL",
+    "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+)
+REALTIME_MARKET_WS_MAX_ASSETS: int = int(os.getenv("REALTIME_MARKET_WS_MAX_ASSETS", "400"))
+REALTIME_MARKET_WS_MAX_HOURS_TO_EXPIRY: float = float(
+    os.getenv("REALTIME_MARKET_WS_MAX_HOURS_TO_EXPIRY", "24.0")
+)
+REALTIME_MARKET_WS_QUOTE_TTL_SECONDS: float = float(
+    os.getenv("REALTIME_MARKET_WS_QUOTE_TTL_SECONDS", "12.0")
+)
+REALTIME_MARKET_WS_BOOK_TTL_SECONDS: float = float(
+    os.getenv("REALTIME_MARKET_WS_BOOK_TTL_SECONDS", "20.0")
+)
 
 # Default fee rate if CLOB endpoint is unreachable
 DEFAULT_FEE_RATE: float = 0.05
