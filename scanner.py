@@ -590,17 +590,21 @@ def get_market_status(condition_id: str) -> dict:
         return cached
 
     try:
-        resp = _session.get(
-            GAMMA_MARKETS_URL,
-            params={"condition_ids": condition_id},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data:
-            market = data[0] if isinstance(data, list) else data
-            _market_status_cache.set(condition_id, market)
-            return market
+        for params in (
+            {"condition_ids": condition_id},
+            {"condition_ids": condition_id, "closed": "true"},
+        ):
+            resp = _session.get(
+                GAMMA_MARKETS_URL,
+                params=params,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data:
+                market = data[0] if isinstance(data, list) else data
+                _market_status_cache.set(condition_id, market)
+                return market
     except Exception as e:
         logger.error(f"Failed to fetch market status for {condition_id}: {e}")
     return {}
