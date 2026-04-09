@@ -30,6 +30,7 @@ New-Item -ItemType Directory -Force -Path $destination | Out-Null
 $files = @(
     "data/portfolio.json",
     "data/portfolio.json.bak",
+    "data/risk_events.jsonl",
     "data/trade_ledger.jsonl",
     "logs/trades.log"
 )

@@ -26,6 +26,7 @@ from logger_setup import setup_logging, get_logger
 from maintenance import reset_runtime_state
 from portfolio import Portfolio
 from risk_manager import RiskManager
+from risk_events import RiskEventJournal
 from shadow_tracker import ShadowTracker
 from tabulate import tabulate
 
@@ -281,6 +282,7 @@ def run() -> None:
     exec_ = Executor()
     comp = Compounder()
     risk = RiskManager(port)
+    risk_journal = RiskEventJournal()
     shadow = ShadowTracker()
 
     startup_checks(port, exec_, ai)
@@ -353,6 +355,17 @@ def run() -> None:
                     )
 
                 if trading_blocked:
+                    risk_journal.record(
+                        cycle=cycle,
+                        stage="global_block",
+                        event="deny",
+                        reason=block_reason,
+                        extra={
+                            "bankroll": round(port.state.current_bankroll, 4),
+                            "open_positions": len(port.state.open_positions),
+                        },
+                        dedupe_key=f"global_block:{block_reason}",
+                    )
                     logger.info(
                         f"━━ CYCLE {cycle:>4} ━━ IDLE ({block_reason}) | "
                         f"bankroll=${port.state.current_bankroll:.2f} | "
@@ -408,6 +421,13 @@ def run() -> None:
                     is_open, _, reason = scanner.verify_market_open(opp.condition_id, opp.question)
                     if not is_open:
                         skipped_closed_count += 1
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="pre_filter",
+                            event="deny",
+                            reason=f"market_{reason}",
+                            opp=opp,
+                        )
                         logger.info(
                             f"  skipped closed market {opp.market_id} "
                             f"({reason}) | {opp.question[:50]}"
@@ -424,6 +444,35 @@ def run() -> None:
                     f"open={len(port.state.open_positions)}"
                 )
 
+                if (
+                    skipped_same_market_count
+                    or skipped_open_count
+                    or skipped_edge_count
+                    or skipped_closed_count
+                ):
+                    risk_journal.record(
+                        cycle=cycle,
+                        stage="pre_filter",
+                        event="summary",
+                        reason="candidate_filtering",
+                        extra={
+                            "same_market_exec_disabled": skipped_same_market_count,
+                            "already_open": skipped_open_count,
+                            "below_edge": skipped_edge_count,
+                            "closed_or_inactive": skipped_closed_count,
+                            "ranked_candidates": len(ranked_candidates),
+                            "queued": len(filtered),
+                        },
+                        dedupe_key=(
+                            "pre_filter_summary:"
+                            f"{skipped_same_market_count}:"
+                            f"{skipped_open_count}:"
+                            f"{skipped_edge_count}:"
+                            f"{skipped_closed_count}:"
+                            f"{len(filtered)}"
+                        ),
+                    )
+
                 # 4. AI validation
                 validated = []
                 ai_pass_count = 0
@@ -433,6 +482,13 @@ def run() -> None:
                         break
                     analysis = ai.analyze(opp)
                     if analysis is None:
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="ai_gate",
+                            event="deny",
+                            reason="ai_unavailable",
+                            opp=opp,
+                        )
                         if not config.ANTHROPIC_API_KEY:
                             from ai_analyzer import AIAnalysis
                             analysis = AIAnalysis(
@@ -451,6 +507,18 @@ def run() -> None:
                         validated.append((opp, analysis, verified_at))
                     elif config.PAPER_TRADING and config.AI_PAPER_MODE == "advisory":
                         advisory_override_count += 1
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="ai_gate",
+                            event="override",
+                            reason="paper_advisory_override",
+                            opp=opp,
+                            extra={
+                                "ai_side": analysis.recommended_side,
+                                "ai_confidence": round(analysis.confidence, 4),
+                                "edge_detected": bool(analysis.edge_detected),
+                            },
+                        )
                         logger.info(
                             f"  paper advisory override for {opp.market_id} "
                             f"(ai_side={analysis.recommended_side}, "
@@ -458,9 +526,34 @@ def run() -> None:
                         )
                         validated.append((opp, analysis, verified_at))
                     elif analysis.is_valid:
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="ai_gate",
+                            event="deny",
+                            reason="ai_side_mismatch",
+                            opp=opp,
+                            extra={
+                                "ai_side": analysis.recommended_side,
+                                "ai_confidence": round(analysis.confidence, 4),
+                                "edge_detected": bool(analysis.edge_detected),
+                            },
+                        )
                         logger.info(
                             f"  skipped AI side mismatch for {opp.market_id} "
                             f"(opp={opp.side}, ai={analysis.recommended_side})"
+                        )
+                    else:
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="ai_gate",
+                            event="deny",
+                            reason="ai_invalid",
+                            opp=opp,
+                            extra={
+                                "ai_side": analysis.recommended_side,
+                                "ai_confidence": round(analysis.confidence, 4),
+                                "edge_detected": bool(analysis.edge_detected),
+                            },
                         )
 
                 if validated and advisory_override_count:
@@ -488,6 +581,14 @@ def run() -> None:
                     allowed, reason = risk.can_trade(opp, size)
 
                     if not allowed:
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="risk_gate",
+                            event="deny",
+                            reason=reason,
+                            opp=opp,
+                            extra={"proposed_size": round(size, 4)},
+                        )
                         logger.info(f"  blocked ({reason})")
                         continue
 
@@ -495,6 +596,14 @@ def run() -> None:
                     if verify_age > EXECUTION_VERIFY_MAX_AGE_SECONDS:
                         is_open, _, status_reason = scanner.verify_market_open(opp.condition_id, opp.question)
                         if not is_open:
+                            risk_journal.record(
+                                cycle=cycle,
+                                stage="execution_check",
+                                event="deny",
+                                reason=f"market_{status_reason}",
+                                opp=opp,
+                                extra={"verify_age_seconds": round(verify_age, 3)},
+                            )
                             logger.info(
                                 f"  blocked (market_{status_reason}) | {opp.question[:50]}"
                             )
@@ -502,6 +611,18 @@ def run() -> None:
 
                     result = exec_.place_order(opp, size)
                     if result and result.get("success"):
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="execution",
+                            event="accept",
+                            reason="order_recorded",
+                            opp=opp,
+                            extra={
+                                "fill_price": float(result.get("fill_price", opp.price) or opp.price),
+                                "fill_size": float(result.get("fill_size", 0) or 0),
+                                "simulated": bool(result.get("simulated", False)),
+                            },
+                        )
                         port.record_trade(opp, result, analysis)
                         comp.update(port.state)
                         trades_placed += 1

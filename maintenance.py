@@ -14,6 +14,7 @@ STATE_FILES = (
     DATA_DIR / "portfolio.json",
     DATA_DIR / "portfolio.json.bak",
     DATA_DIR / "ai_stats.json",
+    DATA_DIR / "risk_events.jsonl",
     DATA_DIR / "shadow_signals.json",
     DATA_DIR / "shadow_report.json",
     DATA_DIR / "strategy_expectancy.json",
