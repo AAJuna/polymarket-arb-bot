@@ -38,6 +38,7 @@ AI_CALLS_PER_MINUTE: int = 30
 AI_CACHE_TTL: int = 180  # seconds
 AI_SKIP_CACHE_TTL: int = int(os.getenv("AI_SKIP_CACHE_TTL", "600"))
 AI_MAX_CANDIDATES: int = int(os.getenv("AI_MAX_CANDIDATES", "2"))
+AI_SCAN_LIMIT: int = int(os.getenv("AI_SCAN_LIMIT", "5"))
 AI_MIN_EDGE_PCT: float = float(os.getenv("AI_MIN_EDGE_PCT", "6.0"))
 AI_PAPER_MODE: str = os.getenv("AI_PAPER_MODE", "gate").strip().lower()  # gate | advisory
 

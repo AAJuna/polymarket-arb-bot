@@ -115,7 +115,8 @@ def _print_startup_summary(port: Portfolio) -> None:
         ["Mode", "PAPER" if config.PAPER_TRADING else "LIVE"],
         ["AI model", config.AI_MODEL],
         ["Min edge", f"{config.MIN_EDGE_PCT:.1f}%"],
-        ["AI queue", config.AI_MAX_CANDIDATES],
+        ["AI exec cap", config.AI_MAX_CANDIDATES],
+        ["AI scan limit", max(config.AI_MAX_CANDIDATES, config.AI_SCAN_LIMIT)],
         ["AI min edge", f"{config.AI_MIN_EDGE_PCT:.1f}%"],
         ["Min AI confidence", f"{config.MIN_AI_CONFIDENCE:.0%}"],
         ["AI paper mode", config.AI_PAPER_MODE if config.PAPER_TRADING else "gate"],
@@ -367,8 +368,9 @@ def run() -> None:
                 if new_shadow_signals:
                     logger.info(f"  shadow tracker recorded {new_shadow_signals} new signal(s)")
 
-                # 3. Pre-filter — skip markets already open, apply edge threshold
-                #    Cap at top 5 by edge score to limit AI token spend
+                # 3. Pre-filter — skip markets already open, apply edge threshold.
+                #    Scan a slightly wider AI window so the same top rejects do not
+                #    starve the rest of the opportunity set every cycle.
                 with port._lock:
                     open_market_ids = {
                         p.get("market_id") for p in port.state.open_positions.values()
@@ -385,7 +387,7 @@ def run() -> None:
                 skipped_edge_count = sum(
                     1 for o in executable_opportunities if o.edge_pct < min_required_edge
                 )
-                filtered = sorted(
+                ranked_candidates = sorted(
                     [
                         o for o in executable_opportunities
                         if o.edge_pct >= min_required_edge
@@ -393,20 +395,23 @@ def run() -> None:
                     ],
                     key=lambda o: o.edge_pct,
                     reverse=True,
-                )[:config.AI_MAX_CANDIDATES]  # Cap AI queue — saves tokens and reduces noise
+                )
 
-                verified_candidates = []
-                pre_verify_count = len(filtered)
-                for opp in filtered:
+                ai_scan_limit = max(config.AI_MAX_CANDIDATES, config.AI_SCAN_LIMIT)
+                filtered = []
+                skipped_closed_count = 0
+                for opp in ranked_candidates:
+                    if len(filtered) >= ai_scan_limit:
+                        break
                     is_open, _, reason = scanner.verify_market_open(opp.condition_id, opp.question)
                     if not is_open:
+                        skipped_closed_count += 1
                         logger.info(
                             f"  skipped closed market {opp.market_id} "
                             f"({reason}) | {opp.question[:50]}"
                         )
                         continue
-                    verified_candidates.append(opp)
-                filtered = verified_candidates
+                    filtered.append(opp)
 
                 logger.info(
                     f"━━ CYCLE {cycle:>4} ━━ "
@@ -422,6 +427,8 @@ def run() -> None:
                 ai_pass_count = 0
                 advisory_override_count = 0
                 for opp in filtered:
+                    if len(validated) >= config.AI_MAX_CANDIDATES:
+                        break
                     analysis = ai.analyze(opp)
                     if analysis is None:
                         if not config.ANTHROPIC_API_KEY:
@@ -462,7 +469,6 @@ def run() -> None:
                 elif validated:
                     logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
                 elif not filtered:
-                    skipped_closed_count = pre_verify_count - len(filtered)
                     logger.info(
                         "  no AI candidates after filters "
                         f"(same_market_exec_disabled={skipped_same_market_count}, "
