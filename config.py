@@ -146,6 +146,9 @@ REALTIME_MARKET_WS_QUOTE_TTL_SECONDS: float = float(
 REALTIME_MARKET_WS_BOOK_TTL_SECONDS: float = float(
     os.getenv("REALTIME_MARKET_WS_BOOK_TTL_SECONDS", "20.0")
 )
+ENABLE_REALTIME_EXECUTION_GATE: bool = os.getenv("ENABLE_REALTIME_EXECUTION_GATE", "true").lower() == "true"
+REALTIME_GATE_MAX_SPREAD: float = float(os.getenv("REALTIME_GATE_MAX_SPREAD", "0.15"))
+REALTIME_GATE_MIN_DEPTH_USD: float = float(os.getenv("REALTIME_GATE_MIN_DEPTH_USD", "5.0"))
 
 # Default fee rate if CLOB endpoint is unreachable
 DEFAULT_FEE_RATE: float = 0.05

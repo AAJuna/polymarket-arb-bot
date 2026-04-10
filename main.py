@@ -136,6 +136,15 @@ def _print_startup_summary(port: Portfolio) -> None:
                 else "off"
             ),
         ],
+        [
+            "Realtime gate",
+            (
+                f"on (spread<={config.REALTIME_GATE_MAX_SPREAD:.2f}, "
+                f"depth>={config.REALTIME_GATE_MIN_DEPTH_USD:.2f})"
+                if config.ENABLE_REALTIME_EXECUTION_GATE
+                else "off"
+            ),
+        ],
     ]
     print(tabulate(rows, tablefmt="simple"))
 

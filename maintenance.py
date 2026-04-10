@@ -19,6 +19,7 @@ STATE_FILES = (
     DATA_DIR / "shadow_report.json",
     DATA_DIR / "strategy_expectancy.json",
     DATA_DIR / "trade_ledger.jsonl",
+    DATA_DIR / "realtime_feed_status.json",
 )
 
 LOG_PATTERNS = (

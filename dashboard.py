@@ -19,6 +19,7 @@ PORTFOLIO_FILE = Path("data/portfolio.json")
 AI_STATS_FILE  = Path("data/ai_stats.json")
 SHADOW_REPORT_FILE = Path("data/shadow_report.json")
 STRATEGY_REPORT_FILE = Path("data/strategy_expectancy.json")
+REALTIME_FEED_STATUS_FILE = Path("data/realtime_feed_status.json")
 REFRESH_SECONDS = 10
 
 
@@ -251,6 +252,10 @@ def load_portfolio() -> dict | None:
             return json.load(f)
     except Exception:
         return None
+
+
+def load_realtime_feed_status() -> dict:
+    return load_json_file(REALTIME_FEED_STATUS_FILE)
 
 
 def fmt_pct(v: float, d: int = 1) -> str:
@@ -667,6 +672,57 @@ if recent_shadow:
 st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
+# Realtime Feed
+# ---------------------------------------------------------------------------
+
+feed = load_realtime_feed_status()
+if feed:
+    st.markdown('<div class="section-hdr">Realtime Feed</div>', unsafe_allow_html=True)
+
+    f1, f2, f3, f4 = st.columns(4)
+    connected = bool(feed.get("connected"))
+    status_label = "Connected" if connected else "Disconnected"
+    status_color = "c-green" if connected else "c-red"
+    updated = str(feed.get("updated_at", "") or "")
+    try:
+        updated = datetime.fromisoformat(updated).astimezone(timezone.utc).strftime("%H:%M:%S")
+    except Exception:
+        updated = "—"
+
+    with f1:
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Feed Status</div>
+          <div class="stat-value {status_color}">{status_label}</div>
+          <div class="stat-sub c-muted">updated {updated} UTC</div>
+        </div>''', unsafe_allow_html=True)
+    with f2:
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Watched Assets</div>
+          <div class="stat-value">{int(feed.get("watched_assets", 0)):,}</div>
+          <div class="stat-sub c-muted">max {config.REALTIME_MARKET_WS_MAX_ASSETS}</div>
+        </div>''', unsafe_allow_html=True)
+    with f3:
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Quote Cache</div>
+          <div class="stat-value c-blue">{int(feed.get("quote_cache_size", 0)):,}</div>
+          <div class="stat-sub c-muted">fresh book/quote snapshots</div>
+        </div>''', unsafe_allow_html=True)
+    with f4:
+        last_message_age = feed.get("last_message_age_seconds")
+        last_message_label = f"{float(last_message_age):.1f}s ago" if last_message_age is not None else "n/a"
+        st.markdown(f'''
+        <div class="stat-card">
+          <div class="stat-label">Wire Traffic</div>
+          <div class="stat-value c-blue">{int(feed.get("message_count", 0)):,}</div>
+          <div class="stat-sub c-muted">{last_message_label} • reconnects {int(feed.get("reconnect_count", 0))}</div>
+        </div>''', unsafe_allow_html=True)
+
+    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
 # AI Usage Stats
 # ---------------------------------------------------------------------------
 
@@ -729,7 +785,18 @@ with st.expander("⚙  Configuration"):
         st.markdown(cfg_row("Daily Loss Limit", f"{config.DAILY_LOSS_LIMIT_PCT:.0%}") + cfg_row("Drawdown Reduce", f"{config.DRAWDOWN_REDUCE_THRESHOLD:.0%}") + cfg_row("Drawdown Stop", f"{config.DRAWDOWN_STOP_THRESHOLD:.0%}") + cfg_row("Consec. Pause At", str(config.CONSECUTIVE_LOSS_PAUSE)) + cfg_row("Pause Duration", f"{config.PAUSE_DURATION_MINUTES}min"), unsafe_allow_html=True)
     with c3:
         st.markdown("**OPERATIONAL**", unsafe_allow_html=False)
-        st.markdown(cfg_row("Poll Interval", f"{config.POLL_INTERVAL}s") + cfg_row("AI Model", config.AI_MODEL.split("-")[1] if "-" in config.AI_MODEL else config.AI_MODEL) + cfg_row("Paper Trading", str(config.PAPER_TRADING)) + cfg_row("Min Volume 24h", f"${config.MIN_VOLUME_24H}") + cfg_row("Min Liquidity", f"${config.MIN_LIQUIDITY}"), unsafe_allow_html=True)
+        st.markdown(
+            cfg_row("Poll Interval", f"{config.POLL_INTERVAL}s")
+            + cfg_row("AI Model", config.AI_MODEL.split("-")[1] if "-" in config.AI_MODEL else config.AI_MODEL)
+            + cfg_row("Paper Trading", str(config.PAPER_TRADING))
+            + cfg_row("Min Volume 24h", f"${config.MIN_VOLUME_24H}")
+            + cfg_row("Min Liquidity", f"${config.MIN_LIQUIDITY}")
+            + cfg_row("Realtime Feed", str(config.REALTIME_MARKET_WS_ENABLED))
+            + cfg_row("Realtime Gate", str(config.ENABLE_REALTIME_EXECUTION_GATE))
+            + cfg_row("Max Spread", f"{config.REALTIME_GATE_MAX_SPREAD:.2f}")
+            + cfg_row("Min Depth", f"${config.REALTIME_GATE_MIN_DEPTH_USD:.2f}"),
+            unsafe_allow_html=True,
+        )
 
 # ---------------------------------------------------------------------------
 # Footer

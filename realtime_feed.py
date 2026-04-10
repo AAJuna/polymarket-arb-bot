@@ -12,12 +12,17 @@ import json
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Optional
 
 import config
 from logger_setup import get_logger
+from utils import utcnow
 
 logger = get_logger(__name__)
+
+DATA_DIR = Path("data")
+STATUS_FILE = DATA_DIR / "realtime_feed_status.json"
 
 if TYPE_CHECKING:
     from scanner import MarketData
@@ -56,10 +61,50 @@ class RealtimeMarketFeed:
         self._last_message_monotonic: float = 0.0
         self._message_count = 0
         self._reconnect_count = 0
+        self._last_status_write = 0.0
+        DATA_DIR.mkdir(exist_ok=True)
 
     @property
     def enabled(self) -> bool:
         return bool(config.REALTIME_MARKET_WS_ENABLED)
+
+    def is_connected(self) -> bool:
+        with self._lock:
+            return self._connected
+
+    def get_spread(self, asset_id: str) -> Optional[float]:
+        snapshot = self._get_snapshot(asset_id)
+        if snapshot is None:
+            return None
+        age = time.monotonic() - snapshot.quote_updated_monotonic
+        if age > config.REALTIME_MARKET_WS_QUOTE_TTL_SECONDS:
+            return None
+        if snapshot.spread is not None:
+            return snapshot.spread
+        if snapshot.best_bid is None or snapshot.best_ask is None:
+            return None
+        return max(0.0, snapshot.best_ask - snapshot.best_bid)
+
+    def status_snapshot(self) -> dict:
+        with self._lock:
+            watched = len(self._desired_assets)
+            quotes = len(self._quotes)
+            connected = self._connected
+        last_message_age = (
+            time.monotonic() - self._last_message_monotonic
+            if self._last_message_monotonic
+            else None
+        )
+        return {
+            "enabled": self.enabled,
+            "connected": connected,
+            "watched_assets": watched,
+            "quote_cache_size": quotes,
+            "message_count": self._message_count,
+            "reconnect_count": self._reconnect_count,
+            "last_message_age_seconds": round(last_message_age, 3) if last_message_age is not None else None,
+            "updated_at": utcnow().isoformat(),
+        }
 
     def start(self) -> None:
         if not self.enabled or self._thread is not None:
@@ -69,6 +114,7 @@ class RealtimeMarketFeed:
             import websocket  # websocket-client
         except Exception as e:
             logger.warning(f"Realtime market feed disabled: websocket-client unavailable ({e})")
+            self._persist_status(force=True)
             return
 
         self._websocket_module = websocket
@@ -84,6 +130,7 @@ class RealtimeMarketFeed:
             f"(max_assets={config.REALTIME_MARKET_WS_MAX_ASSETS}, "
             f"window={config.REALTIME_MARKET_WS_MAX_HOURS_TO_EXPIRY:.0f}h)"
         )
+        self._persist_status(force=True)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -102,6 +149,7 @@ class RealtimeMarketFeed:
         self._thread = None
         self._ws = None
         self._connected = False
+        self._persist_status(force=True)
 
     def refresh_watchlist(
         self,
@@ -176,6 +224,7 @@ class RealtimeMarketFeed:
                 return
             self._desired_assets = cleaned
         self._subscription_dirty.set()
+        self._persist_status()
 
     def get_best_ask(self, asset_id: str) -> Optional[float]:
         snapshot = self._get_snapshot(asset_id)
@@ -202,30 +251,41 @@ class RealtimeMarketFeed:
     def log_status(self) -> None:
         if not self.enabled:
             return
-        with self._lock:
-            watched = len(self._desired_assets)
-            cached_quotes = len(self._quotes)
-            connected = self._connected
-        last_message_age = (
-            time.monotonic() - self._last_message_monotonic
-            if self._last_message_monotonic
-            else None
-        )
-        last_message_label = (
-            f"{last_message_age:.1f}s"
-            if last_message_age is not None
-            else "n/a"
-        )
+        status = self.status_snapshot()
+        last_message_age = status.get("last_message_age_seconds")
+        last_message_label = f"{last_message_age:.1f}s" if last_message_age is not None else "n/a"
         logger.info(
             "Realtime feed: "
-            f"connected={connected} watched={watched} quotes={cached_quotes} "
-            f"messages={self._message_count} reconnects={self._reconnect_count} "
+            f"connected={status['connected']} watched={status['watched_assets']} "
+            f"quotes={status['quote_cache_size']} messages={status['message_count']} "
+            f"reconnects={status['reconnect_count']} "
             f"last_message={last_message_label}"
         )
+        self._persist_status(force=True)
 
     def _get_snapshot(self, asset_id: str) -> Optional[QuoteSnapshot]:
         with self._lock:
             return self._quotes.get(str(asset_id))
+
+    def _persist_status(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and (now - self._last_status_write) < 5.0:
+            return
+
+        payload = self.status_snapshot()
+        tmp_file = STATUS_FILE.with_suffix(".json.tmp")
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+                f.flush()
+            try:
+                tmp_file.replace(STATUS_FILE)
+            except PermissionError:
+                with open(STATUS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+            self._last_status_write = now
+        except Exception as e:
+            logger.debug(f"Realtime status write failed: {e}")
 
     def _run(self) -> None:
         backoff = 2.0
@@ -257,6 +317,7 @@ class RealtimeMarketFeed:
                 self._ws = None
                 with self._lock:
                     self._subscribed_assets.clear()
+                self._persist_status(force=True)
 
             if self._stop_event.is_set():
                 break
@@ -268,6 +329,7 @@ class RealtimeMarketFeed:
     def _on_open(self, ws_app) -> None:
         self._connected = True
         self._subscription_dirty.set()
+        self._persist_status(force=True)
         logger.info(
             "Realtime market feed connected "
             f"({len(self._get_desired_assets())} asset(s) queued)"
@@ -283,6 +345,7 @@ class RealtimeMarketFeed:
     def _on_message(self, ws_app, message: str) -> None:
         self._last_message_monotonic = time.monotonic()
         self._message_count += 1
+        self._persist_status()
 
         if message == "PONG":
             return
@@ -317,6 +380,7 @@ class RealtimeMarketFeed:
                 f"(status={status_code}, message={message})"
             )
         self._connected = False
+        self._persist_status(force=True)
 
     def _heartbeat_loop(self, ws_app) -> None:
         next_ping = time.monotonic() + 10.0
@@ -332,6 +396,7 @@ class RealtimeMarketFeed:
                 self._safe_send_text(ws_app, "PING")
                 next_ping = now + 10.0
 
+            self._persist_status()
             time.sleep(1.0)
 
     def _handle_event(self, payload: dict) -> None:

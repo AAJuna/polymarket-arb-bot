@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Tuple
 
 import config
 from logger_setup import get_logger
-from utils import utcnow
+from realtime_feed import get_shared_feed
+from utils import compute_orderbook_depth, utcnow
 
 if TYPE_CHECKING:
     from arbitrage import Opportunity
@@ -161,6 +162,29 @@ class RiskManager:
                 f"market_concentration_exceeded "
                 f"({opp.market_id}: {market_exposure:.2f} + {proposed_size:.2f} > {max_concentration:.2f})"
             )
+
+        # Realtime execution gate — only enforce when the feed is live.
+        if config.ENABLE_REALTIME_EXECUTION_GATE:
+            feed = get_shared_feed()
+            if feed.enabled and feed.is_connected():
+                spread = feed.get_spread(opp.token_id)
+                if spread is not None and spread > config.REALTIME_GATE_MAX_SPREAD:
+                    return False, (
+                        f"realtime_spread_too_wide "
+                        f"(spread={spread:.3f}, max={config.REALTIME_GATE_MAX_SPREAD:.3f})"
+                    )
+
+                asks = feed.get_orderbook_asks(opp.token_id)
+                if asks:
+                    _, depth_usd = compute_orderbook_depth(
+                        asks,
+                        config.REALTIME_GATE_MIN_DEPTH_USD,
+                    )
+                    if depth_usd < config.REALTIME_GATE_MIN_DEPTH_USD:
+                        return False, (
+                            f"realtime_depth_insufficient "
+                            f"(depth={depth_usd:.2f}, min={config.REALTIME_GATE_MIN_DEPTH_USD:.2f})"
+                        )
 
         # Max concurrent open orders
         if len(state.open_positions) >= config.MAX_CONCURRENT_ORDERS:
