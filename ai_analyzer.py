@@ -15,6 +15,7 @@ import anthropic
 
 import config
 from logger_setup import get_logger
+from match_analytics import get_matchup_analysis_for_opportunity
 from utils import RateLimiter, TTLCache, utcnow
 
 AI_STATS_FILE = Path("data/ai_stats.json")
@@ -78,6 +79,13 @@ class AIAnalysis:
             self.confidence >= config.MIN_AI_CONFIDENCE
             and self.edge_detected
             and self.recommended_side != "SKIP"
+        )
+
+    def supports_candidate(self, side: str, price: float) -> bool:
+        return (
+            self.is_valid
+            and self.recommended_side == side
+            and self.predicted_probability > price
         )
 
 
@@ -265,18 +273,49 @@ class AIAnalyzer:
                 f"\nSportsbook consensus ({ext.bookmaker_count} bookmakers): "
                 f"{ext.home_team}={ext.home_prob:.1%} / {ext.away_team}={ext.away_prob:.1%}"
             )
+            if ext.draw_prob is not None:
+                odds_section += f" / Draw={ext.draw_prob:.1%}"
+
+        candidate_market_price = opp.price
+        candidate_section = (
+            f"\nCandidate trade: BUY {opp.side} @ ${candidate_market_price:.3f}"
+        )
+
+        matchup_section = ""
+        matchup = get_matchup_analysis_for_opportunity(opp)
+        if matchup is not None:
+            candidate_true_prob = (
+                matchup.yes_true_prob if opp.side == "YES" else matchup.no_true_prob
+            )
+            matchup_section = (
+                "\n\nStructured match model context:\n"
+                f"{matchup.to_prompt_block()}\n"
+                f"- Candidate side fair probability: {candidate_true_prob:.1%}\n"
+            )
 
         return f"""You are a prediction market expert and sports analyst.
 
 Market: {opp.question}
 Current YES price: ${opp.yes_price:.3f} | NO price: ${opp.no_price:.3f}
+{candidate_section}
 Detected edge: {opp.edge_pct:.1f}% ({opp.type})
 End date: {opp.end_date.strftime('%Y-%m-%d %H:%M UTC')}
 {odds_section}
+{matchup_section}
 
-Assess whether this edge is real or a data artifact. Consider:
+Assess whether the candidate trade has a real edge or is a data artifact. Use the
+structured match model when present, and do not recommend the opposite side unless
+the evidence is strong enough to invalidate the candidate outright. Prefer SKIP over
+guessing when the model or evidence is weak.
+
+Consider:
+- Does the candidate side's fair probability exceed its market price by a defensible margin?
+- Do recent form, head-to-head, home/away split, shots on target, xG proxy, and lineup notes support the edge?
 - Is the pricing discrepancy likely to persist until expiry?
 - Are there upcoming events (injuries, news) that could affect the outcome?
 - Is the market liquid enough for meaningful edge?
+
+For predicted_probability, return the estimated true probability of your recommended
+side being correct, not the market YES probability unless you recommend YES.
 
 Use the market_analysis tool to return your structured assessment."""

@@ -613,7 +613,26 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             continue
 
         reference_yes_price = _get_cached_best_ask(m.yes_token_id) or m.yes_price
-        edge_pct = (sportsbook_prob - reference_yes_price) * 100
+        reference_no_price = _get_cached_best_ask(m.no_token_id) or m.no_price
+        yes_edge = (sportsbook_prob - reference_yes_price) * 100
+        no_true_prob = max(0.0, 1.0 - sportsbook_prob)
+        no_edge = (no_true_prob - reference_no_price) * 100
+
+        if yes_edge >= no_edge:
+            chosen_side = "YES"
+            chosen_token_id = m.yes_token_id
+            chosen_price = reference_yes_price
+            edge_pct = yes_edge
+        else:
+            chosen_side = "NO"
+            chosen_token_id = m.no_token_id
+            chosen_price = reference_no_price
+            edge_pct = no_edge
+
+        if chosen_price < config.ODDS_COMPARISON_MIN_PRICE:
+            stats["low_price"] += 1
+            continue
+
         if edge_pct < config.MIN_EDGE_PCT:
             stats["below_edge"] += 1
             continue
@@ -621,20 +640,22 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
         stats["emitted"] += 1
         logger.debug(
             f"Odds arb: {m.question[:50]} | "
-            f"polymarket={reference_yes_price:.3f} sportsbook={sportsbook_prob:.3f} edge={edge_pct:.1f}%"
+            f"yes={reference_yes_price:.3f}/{sportsbook_prob:.3f} "
+            f"no={reference_no_price:.3f}/{no_true_prob:.3f} "
+            f"chosen={chosen_side} edge={edge_pct:.1f}%"
         )
 
         opps.append(Opportunity(
             type="odds_comparison",
             market_id=m.market_id,
             condition_id=m.condition_id,
-            token_id=m.yes_token_id,
-            side="YES",
-            price=reference_yes_price,
+            token_id=chosen_token_id,
+            side=chosen_side,
+            price=chosen_price,
             edge_pct=edge_pct,
             confidence_source="odds_comparison",
             yes_price=reference_yes_price,
-            no_price=m.no_price,
+            no_price=reference_no_price,
             question=m.question,
             end_date=m.end_date,
             raw_data=m,
@@ -654,6 +675,7 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
         f"no_match={stats['no_odds_match']} "
         f"low_conf={stats['low_confidence']} "
         f"ambiguous={stats['ambiguous_side']} "
+        f"low_price={stats['low_price']} "
         f"below_edge={stats['below_edge']} "
         f"emitted={stats['emitted']}"
     )

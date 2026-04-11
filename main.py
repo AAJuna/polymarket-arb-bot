@@ -184,6 +184,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _log_reset_summary(summary: dict) -> None:
     removed = len(summary.get("removed") or [])
     errors = summary.get("errors") or []
+    snapshot = summary.get("snapshot") or {}
+    snapshot_path = snapshot.get("path")
+    if snapshot_path:
+        logger.warning(
+            f"Fresh start archive created â€” {snapshot_path} "
+            f"({len(snapshot.get('copied') or [])} file(s))"
+        )
+    for err in snapshot.get("errors") or []:
+        logger.warning(f"Fresh start archive warning: {err}")
     logger.warning(
         f"Fresh start reset complete — removed {removed} file(s), "
         f"clear_logs={summary.get('clear_logs', False)}"
@@ -502,8 +511,7 @@ def run() -> None:
 
                 # 4. AI validation
                 validated = []
-                ai_pass_count = 0
-                advisory_override_count = 0
+                advisory_block_count = 0
                 for opp, verified_at in filtered:
                     if len(validated) >= config.AI_MAX_CANDIDATES:
                         break
@@ -519,7 +527,7 @@ def run() -> None:
                         if not config.ANTHROPIC_API_KEY:
                             from ai_analyzer import AIAnalysis
                             analysis = AIAnalysis(
-                                predicted_probability=opp.yes_price,
+                                predicted_probability=min(1.0, opp.price + 0.05),
                                 confidence=1.0,
                                 reasoning="AI disabled",
                                 edge_detected=True,
@@ -529,35 +537,27 @@ def run() -> None:
                         else:
                             continue
 
-                    if analysis.is_valid and analysis.recommended_side == opp.side:
-                        ai_pass_count += 1
+                    if analysis.supports_candidate(opp.side, opp.price):
                         validated.append((opp, analysis, verified_at))
                     elif config.PAPER_TRADING and config.AI_PAPER_MODE == "advisory":
-                        advisory_override_count += 1
-                        risk_journal.record(
-                            cycle=cycle,
-                            stage="ai_gate",
-                            event="override",
-                            reason="paper_advisory_override",
-                            opp=opp,
-                            extra={
-                                "ai_side": analysis.recommended_side,
-                                "ai_confidence": round(analysis.confidence, 4),
-                                "edge_detected": bool(analysis.edge_detected),
-                            },
-                        )
-                        logger.info(
-                            f"  paper advisory override for {opp.market_id} "
-                            f"(ai_side={analysis.recommended_side}, "
-                            f"edge={analysis.edge_detected}, conf={analysis.confidence:.2f})"
-                        )
-                        validated.append((opp, analysis, verified_at))
-                    elif analysis.is_valid:
+                        advisory_block_count += 1
+                        if analysis.recommended_side == "SKIP":
+                            advisory_reason = "paper_advisory_skip"
+                        elif analysis.recommended_side != opp.side:
+                            advisory_reason = "paper_advisory_side_mismatch"
+                        elif analysis.predicted_probability <= opp.price:
+                            advisory_reason = "paper_advisory_model_below_price"
+                        elif analysis.confidence < config.MIN_AI_CONFIDENCE:
+                            advisory_reason = "paper_advisory_low_confidence"
+                        elif not analysis.edge_detected:
+                            advisory_reason = "paper_advisory_no_edge"
+                        else:
+                            advisory_reason = "paper_advisory_blocked"
                         risk_journal.record(
                             cycle=cycle,
                             stage="ai_gate",
                             event="deny",
-                            reason="ai_side_mismatch",
+                            reason=advisory_reason,
                             opp=opp,
                             extra={
                                 "ai_side": analysis.recommended_side,
@@ -566,9 +566,50 @@ def run() -> None:
                             },
                         )
                         logger.info(
-                            f"  skipped AI side mismatch for {opp.market_id} "
-                            f"(opp={opp.side}, ai={analysis.recommended_side})"
+                            f"  paper advisory blocked for {opp.market_id} "
+                            f"(ai_side={analysis.recommended_side}, "
+                            f"edge={analysis.edge_detected}, conf={analysis.confidence:.2f})"
                         )
+                    elif analysis.is_valid:
+                        if analysis.recommended_side != opp.side:
+                            risk_journal.record(
+                                cycle=cycle,
+                                stage="ai_gate",
+                                event="deny",
+                                reason="ai_side_mismatch",
+                                opp=opp,
+                                extra={
+                                    "ai_side": analysis.recommended_side,
+                                    "ai_confidence": round(analysis.confidence, 4),
+                                    "edge_detected": bool(analysis.edge_detected),
+                                    "predicted_probability": round(analysis.predicted_probability, 4),
+                                    "candidate_price": round(opp.price, 4),
+                                },
+                            )
+                            logger.info(
+                                f"  skipped AI side mismatch for {opp.market_id} "
+                                f"(opp={opp.side}, ai={analysis.recommended_side})"
+                            )
+                        else:
+                            risk_journal.record(
+                                cycle=cycle,
+                                stage="ai_gate",
+                                event="deny",
+                                reason="ai_model_below_price",
+                                opp=opp,
+                                extra={
+                                    "ai_side": analysis.recommended_side,
+                                    "ai_confidence": round(analysis.confidence, 4),
+                                    "edge_detected": bool(analysis.edge_detected),
+                                    "predicted_probability": round(analysis.predicted_probability, 4),
+                                    "candidate_price": round(opp.price, 4),
+                                },
+                            )
+                            logger.info(
+                                f"  skipped AI model below price for {opp.market_id} "
+                                f"(side={opp.side}, model={analysis.predicted_probability:.3f}, "
+                                f"price={opp.price:.3f})"
+                            )
                     else:
                         risk_journal.record(
                             cycle=cycle,
@@ -583,13 +624,13 @@ def run() -> None:
                             },
                         )
 
-                if validated and advisory_override_count:
-                    logger.info(
-                        f"  ✓ {ai_pass_count} AI pass + "
-                        f"{advisory_override_count} paper advisory override -> executing"
-                    )
-                elif validated:
+                if validated:
                     logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
+                elif advisory_block_count:
+                    logger.info(
+                        f"  ✗ 0/{len(filtered)} passed AI validation "
+                        f"({advisory_block_count} advisory candidate(s) blocked by hard guardrails)"
+                    )
                 elif not filtered:
                     logger.info(
                         "  no AI candidates after filters "

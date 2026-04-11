@@ -78,6 +78,8 @@ ODDS_SPORTS: list = [
     "soccer_uefa_champs_league",
 ]
 ODDS_CACHE_TTL: int = 3600  # seconds (1 hour — conserves free tier quota)
+SPORTMONKS_API_KEY: str = os.getenv("SPORTMONKS_API_KEY", "")
+SPORTMONKS_API_BASE: str = os.getenv("SPORTMONKS_API_BASE", "https://api.sportmonks.com/v3/football")
 
 # ---------------------------------------------------------------------------
 # Trading parameters
@@ -111,6 +113,16 @@ ENABLE_SAME_MARKET_EXECUTION: bool = os.getenv("ENABLE_SAME_MARKET_EXECUTION", "
 ENABLE_CROSS_MARKET_ARB: bool = os.getenv("ENABLE_CROSS_MARKET_ARB", "false").lower() == "true"
 ENABLE_ODDS_COMPARISON_ARB: bool = os.getenv("ENABLE_ODDS_COMPARISON_ARB", "true").lower() == "true"
 ODDS_COMPARISON_MONEYLINE_ONLY: bool = os.getenv("ODDS_COMPARISON_MONEYLINE_ONLY", "true").lower() == "true"
+ODDS_COMPARISON_MIN_PRICE: float = float(os.getenv("ODDS_COMPARISON_MIN_PRICE", "0.05"))
+MATCH_ANALYTICS_ENABLED: bool = os.getenv("MATCH_ANALYTICS_ENABLED", "true").lower() == "true"
+MATCH_ANALYTICS_CACHE_TTL: int = int(os.getenv("MATCH_ANALYTICS_CACHE_TTL", "900"))
+MATCH_LOOKBACK_DAYS: int = int(os.getenv("MATCH_LOOKBACK_DAYS", "365"))
+MATCH_LOOKBACK_MATCHES: int = int(os.getenv("MATCH_LOOKBACK_MATCHES", "8"))
+MATCH_RECENCY_DECAY: float = float(os.getenv("MATCH_RECENCY_DECAY", "0.82"))
+MATCH_HOME_ADVANTAGE: float = float(os.getenv("MATCH_HOME_ADVANTAGE", "0.12"))
+MATCH_XG_PER_SHOT_ON_TARGET: float = float(os.getenv("MATCH_XG_PER_SHOT_ON_TARGET", "0.32"))
+MATCH_LINEUP_ABSENCE_PENALTY: float = float(os.getenv("MATCH_LINEUP_ABSENCE_PENALTY", "0.025"))
+MATCH_HEAD_TO_HEAD_WEIGHT: float = float(os.getenv("MATCH_HEAD_TO_HEAD_WEIGHT", "0.03"))
 SPORTS_KEYWORDS: list = [
     "nba", "nfl", "mlb", "nhl", "ncaa", "soccer", "tennis",
     "mma", "ufc", "boxing", "epl", "champions league", "atp",
@@ -190,4 +202,8 @@ def validate() -> list[str]:
         issues.append("same-market arb detection enabled but execution disabled until bundle execution is atomic")
     if not PAPER_TRADING and AI_PAPER_MODE != "gate":
         issues.append("AI_PAPER_MODE is ignored in live mode — AI remains a hard gate")
+    if PAPER_TRADING and AI_PAPER_MODE == "advisory":
+        issues.append("AI_PAPER_MODE=advisory no longer bypasses low-confidence or side-mismatch AI denials")
+    if MATCH_ANALYTICS_ENABLED and not SPORTMONKS_API_KEY:
+        issues.append("SPORTMONKS_API_KEY not set — advanced team analytics will use lightweight fallback only")
     return issues
