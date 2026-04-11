@@ -8,10 +8,13 @@ so the bot can continue running with a lower-confidence baseline.
 
 from __future__ import annotations
 
+import json
 import math
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
@@ -29,6 +32,8 @@ _session = requests.Session()
 _session.headers.update({"Accept": "application/json"})
 _analysis_cache = TTLCache(ttl_seconds=config.MATCH_ANALYTICS_CACHE_TTL)
 _team_cache = TTLCache(ttl_seconds=config.MATCH_ANALYTICS_CACHE_TTL)
+_provider_usage_lock = threading.Lock()
+_PROVIDER_USAGE_FILE = Path("data/match_provider_usage.json")
 
 _SPORTMONKS_INCLUDE = (
     "participants;"
@@ -45,6 +50,70 @@ _STAT_SHOTS_ON_TARGET = 86
 _STAT_SHOTS_TOTAL = 42
 _STAT_GOALS = 52
 _STAT_GOALS_CONCEDED = 88
+
+
+class ProviderQuotaExceeded(RuntimeError):
+    pass
+
+
+def _provider_daily_limit(provider: str) -> int:
+    if provider == "sportmonks":
+        return max(0, config.SPORTMONKS_DAILY_LIMIT)
+    if provider == "api_football":
+        return max(0, config.API_FOOTBALL_DAILY_LIMIT)
+    return 0
+
+
+def _provider_day_key() -> str:
+    return utcnow().date().isoformat()
+
+
+def _load_provider_usage() -> dict[str, dict[str, int]]:
+    if not _PROVIDER_USAGE_FILE.exists():
+        return {}
+    try:
+        return json.loads(_PROVIDER_USAGE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_provider_usage(payload: dict[str, dict[str, int]]) -> None:
+    _PROVIDER_USAGE_FILE.parent.mkdir(exist_ok=True)
+    _PROVIDER_USAGE_FILE.write_text(
+        json.dumps(payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def _reserve_provider_call(provider: str) -> bool:
+    limit = _provider_daily_limit(provider)
+    if limit <= 0:
+        return True
+
+    with _provider_usage_lock:
+        usage = _load_provider_usage()
+        day_key = _provider_day_key()
+        day_usage = usage.setdefault(day_key, {})
+        calls = int(day_usage.get(provider, 0) or 0)
+        if calls >= limit:
+            return False
+        day_usage[provider] = calls + 1
+
+        for key in list(usage.keys()):
+            if key < day_key:
+                usage.pop(key, None)
+        _save_provider_usage(usage)
+    return True
+
+
+def _provider_order() -> list[str]:
+    ordered: list[str] = []
+    for provider in config.MATCH_DATA_PROVIDERS:
+        if provider in {"sportmonks", "api_football", "sportsbook_only"} and provider not in ordered:
+            ordered.append(provider)
+    if "sportsbook_only" not in ordered:
+        ordered.append("sportsbook_only")
+    return ordered
 
 
 def _normalize(text: str) -> str:
@@ -188,6 +257,10 @@ def _sportmonks_enabled() -> bool:
     return bool(config.MATCH_ANALYTICS_ENABLED and config.SPORTMONKS_API_KEY)
 
 
+def _api_football_enabled() -> bool:
+    return bool(config.MATCH_ANALYTICS_ENABLED and config.API_FOOTBALL_API_KEY)
+
+
 def _sportmonks_payload(response: requests.Response) -> list[dict]:
     data = response.json()
     if isinstance(data, dict):
@@ -213,7 +286,11 @@ def _sportmonks_get(path: str, **params) -> list[dict]:
     results: list[dict] = []
     page = 1
     while True:
+        if not _reserve_provider_call("sportmonks"):
+            raise ProviderQuotaExceeded("sportmonks daily limit reached")
         resp = _session.get(url, params={**query, "page": page}, timeout=12)
+        if resp.status_code in (402, 403, 429):
+            raise ProviderQuotaExceeded(f"sportmonks quota/status={resp.status_code}")
         resp.raise_for_status()
         rows = _sportmonks_payload(resp)
         results.extend(rows)
@@ -236,8 +313,8 @@ def _team_match_score(query: str, candidate: dict) -> float:
     return exact * 2.0 + overlap
 
 
-def _search_team(name: str) -> Optional[dict]:
-    cache_key = f"team:{_normalize(name)}"
+def _search_team_sportmonks(name: str) -> Optional[dict]:
+    cache_key = f"sportmonks:team:{_normalize(name)}"
     cached = _team_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -261,6 +338,70 @@ def _search_team(name: str) -> Optional[dict]:
         score = _team_match_score(name, row)
         if score > best_score:
             best = row
+            best_score = score
+
+    _team_cache.set(cache_key, best)
+    return best
+
+
+def _api_football_payload(response: requests.Response) -> list[dict]:
+    data = response.json()
+    if isinstance(data, dict):
+        rows = data.get("response")
+        if isinstance(rows, list):
+            return rows
+    return []
+
+
+@retry(max_attempts=2, base_delay=1.0, exceptions=(requests.RequestException,))
+def _api_football_get(path: str, **params) -> list[dict]:
+    if not _reserve_provider_call("api_football"):
+        raise ProviderQuotaExceeded("api_football daily limit reached")
+
+    if "from_" in params and "from" not in params:
+        params["from"] = params.pop("from_")
+
+    url = f"{config.API_FOOTBALL_API_BASE.rstrip('/')}/{path.lstrip('/')}"
+    resp = _session.get(
+        url,
+        params={key: value for key, value in params.items() if value is not None},
+        headers={
+            "Accept": "application/json",
+            "x-apisports-key": config.API_FOOTBALL_API_KEY,
+        },
+        timeout=12,
+    )
+    if resp.status_code in (402, 403, 429):
+        raise ProviderQuotaExceeded(f"api_football quota/status={resp.status_code}")
+    resp.raise_for_status()
+    return _api_football_payload(resp)
+
+
+def _search_team_api_football(name: str) -> Optional[dict]:
+    cache_key = f"api_football:team:{_normalize(name)}"
+    cached = _team_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    if not _api_football_enabled():
+        return None
+
+    try:
+        rows = _api_football_get("teams", search=name)
+    except Exception as exc:
+        logger.debug(f"API-Football team search failed for {name}: {exc}")
+        _team_cache.set(cache_key, None)
+        return None
+
+    best = None
+    best_score = 0.0
+    for row in rows:
+        candidate = row.get("team") or {}
+        score = _team_match_score(name, candidate)
+        if score > best_score:
+            best = {
+                "id": candidate.get("id"),
+                "name": candidate.get("name"),
+            }
             best_score = score
 
     _team_cache.set(cache_key, best)
@@ -484,11 +625,23 @@ def _build_strength(
     shots_for = [sample.shots_on_target_for for sample in chosen]
     shots_against = [sample.shots_on_target_against for sample in chosen]
     xg_for = [
-        sample.xg_for if sample.xg_for is not None else sample.shots_on_target_for * config.MATCH_XG_PER_SHOT_ON_TARGET
+        sample.xg_for
+        if sample.xg_for is not None
+        else (
+            sample.shots_on_target_for * config.MATCH_XG_PER_SHOT_ON_TARGET
+            if sample.shots_on_target_for > 0
+            else sample.goals_for
+        )
         for sample in chosen
     ]
     xg_against = [
-        sample.xg_against if sample.xg_against is not None else sample.shots_on_target_against * config.MATCH_XG_PER_SHOT_ON_TARGET
+        sample.xg_against
+        if sample.xg_against is not None
+        else (
+            sample.shots_on_target_against * config.MATCH_XG_PER_SHOT_ON_TARGET
+            if sample.shots_on_target_against > 0
+            else sample.goals_against
+        )
         for sample in chosen
     ]
     points = [sample.points / 3.0 for sample in chosen]
@@ -647,12 +800,92 @@ def _lightweight_analysis(ext: ExternalOdds, yes_side: str) -> MatchupAnalysis:
     )
 
 
+def _build_matchup_from_strengths(
+    provider: str,
+    ext: ExternalOdds,
+    yes_side: str,
+    home_strength: TeamStrength,
+    away_strength: TeamStrength,
+    h2h_fixtures: list[dict],
+    confidence_base: float,
+    extra_notes: Optional[list[str]] = None,
+) -> MatchupAnalysis:
+    h2h_adjustment, h2h_count, h2h_notes = _head_to_head_adjustment(
+        int(home_strength.team_id or 0),
+        h2h_fixtures,
+    )
+    home_lambda = max(
+        0.2,
+        ((home_strength.attack_rating + away_strength.defense_rating) / 2.0)
+        * (1.0 + config.MATCH_HOME_ADVANTAGE)
+        * (1.0 + h2h_adjustment),
+    )
+    away_lambda = max(
+        0.2,
+        ((away_strength.attack_rating + home_strength.defense_rating) / 2.0)
+        * (1.0 - h2h_adjustment),
+    )
+    home_lambda = min(home_lambda, 4.0)
+    away_lambda = min(away_lambda, 4.0)
+
+    home_win_prob, draw_prob, away_win_prob = _simulate_result_probs(home_lambda, away_lambda)
+    if yes_side == "home":
+        yes_true_prob = home_win_prob
+    elif yes_side == "away":
+        yes_true_prob = away_win_prob
+    else:
+        yes_true_prob = draw_prob
+
+    confidence = min(
+        0.92,
+        confidence_base
+        + min(home_strength.sample_size, config.MATCH_LOOKBACK_MATCHES) * 0.03
+        + min(away_strength.sample_size, config.MATCH_LOOKBACK_MATCHES) * 0.03
+        + min(h2h_count, 4) * 0.03
+        + (0.05 if home_strength.lineup_known or away_strength.lineup_known else 0.0),
+    )
+
+    notes = [*h2h_notes]
+    if home_strength.lineup_known or away_strength.lineup_known:
+        notes.append(
+            f"lineups home_abs={home_strength.unavailable_count} "
+            f"away_abs={away_strength.unavailable_count}"
+        )
+    else:
+        notes.append("lineups unavailable")
+    if extra_notes:
+        notes.extend(extra_notes)
+
+    return MatchupAnalysis(
+        provider=provider,
+        home_team=home_strength.team_name,
+        away_team=away_strength.team_name,
+        yes_side=yes_side,
+        model_confidence=confidence,
+        sportsbook_home_prob=ext.home_prob,
+        sportsbook_away_prob=ext.away_prob,
+        sportsbook_draw_prob=ext.draw_prob,
+        home_win_prob=home_win_prob,
+        draw_prob=draw_prob,
+        away_win_prob=away_win_prob,
+        yes_true_prob=yes_true_prob,
+        no_true_prob=max(0.0, 1.0 - yes_true_prob),
+        expected_goals_home=home_lambda,
+        expected_goals_away=away_lambda,
+        lookback_matches=min(home_strength.sample_size, away_strength.sample_size),
+        head_to_head_matches=h2h_count,
+        home_strength=home_strength,
+        away_strength=away_strength,
+        notes=notes,
+    )
+
+
 def _sportmonks_analysis(ext: ExternalOdds, yes_side: str, end_date) -> Optional[MatchupAnalysis]:
     if "soccer" not in (ext.sport or "").lower():
         return None
 
-    home_team = _search_team(ext.home_team)
-    away_team = _search_team(ext.away_team)
+    home_team = _search_team_sportmonks(ext.home_team)
+    away_team = _search_team_sportmonks(ext.away_team)
     if home_team is None or away_team is None:
         return None
 
@@ -686,69 +919,129 @@ def _sportmonks_analysis(ext: ExternalOdds, yes_side: str, end_date) -> Optional
     if home_strength is None or away_strength is None:
         return None
 
-    h2h_adjustment, h2h_count, h2h_notes = _head_to_head_adjustment(home_team_id, h2h_fixtures)
-    home_lambda = max(
-        0.2,
-        ((home_strength.attack_rating + away_strength.defense_rating) / 2.0)
-        * (1.0 + config.MATCH_HOME_ADVANTAGE)
-        * (1.0 + h2h_adjustment),
-    )
-    away_lambda = max(
-        0.2,
-        ((away_strength.attack_rating + home_strength.defense_rating) / 2.0)
-        * (1.0 - h2h_adjustment),
-    )
-    home_lambda = min(home_lambda, 4.0)
-    away_lambda = min(away_lambda, 4.0)
-
-    home_win_prob, draw_prob, away_win_prob = _simulate_result_probs(home_lambda, away_lambda)
-    if yes_side == "home":
-        yes_true_prob = home_win_prob
-    elif yes_side == "away":
-        yes_true_prob = away_win_prob
-    else:
-        yes_true_prob = draw_prob
-
-    confidence = min(
-        0.92,
-        0.35
-        + min(home_strength.sample_size, config.MATCH_LOOKBACK_MATCHES) * 0.03
-        + min(away_strength.sample_size, config.MATCH_LOOKBACK_MATCHES) * 0.03
-        + min(h2h_count, 4) * 0.03
-        + (0.05 if home_strength.lineup_known or away_strength.lineup_known else 0.0),
-    )
-
-    notes = [
-        *h2h_notes,
-        (
-            f"lineups home_abs={home_strength.unavailable_count} "
-            f"away_abs={away_strength.unavailable_count}"
-            if home_strength.lineup_known or away_strength.lineup_known
-            else "lineups unavailable"
-        ),
-    ]
-
-    return MatchupAnalysis(
+    return _build_matchup_from_strengths(
         provider="sportmonks",
-        home_team=home_strength.team_name,
-        away_team=away_strength.team_name,
+        ext=ext,
         yes_side=yes_side,
-        model_confidence=confidence,
-        sportsbook_home_prob=ext.home_prob,
-        sportsbook_away_prob=ext.away_prob,
-        sportsbook_draw_prob=ext.draw_prob,
-        home_win_prob=home_win_prob,
-        draw_prob=draw_prob,
-        away_win_prob=away_win_prob,
-        yes_true_prob=yes_true_prob,
-        no_true_prob=max(0.0, 1.0 - yes_true_prob),
-        expected_goals_home=home_lambda,
-        expected_goals_away=away_lambda,
-        lookback_matches=min(home_strength.sample_size, away_strength.sample_size),
-        head_to_head_matches=h2h_count,
         home_strength=home_strength,
         away_strength=away_strength,
-        notes=notes,
+        h2h_fixtures=h2h_fixtures,
+        confidence_base=0.35,
+    )
+
+
+def _normalize_api_football_fixture(row: dict) -> Optional[dict]:
+    fixture = row.get("fixture") or {}
+    teams = row.get("teams") or {}
+    goals = row.get("goals") or {}
+
+    home = teams.get("home") or {}
+    away = teams.get("away") or {}
+    home_id = _to_int(home.get("id"))
+    away_id = _to_int(away.get("id"))
+    if home_id is None or away_id is None:
+        return None
+
+    normalized = {
+        "id": _to_int(fixture.get("id")),
+        "starting_at": fixture.get("date"),
+        "participants": [
+            {
+                "id": home_id,
+                "name": home.get("name"),
+                "meta": {"location": "home"},
+            },
+            {
+                "id": away_id,
+                "name": away.get("name"),
+                "meta": {"location": "away"},
+            },
+        ],
+        "scores": [],
+        "statistics": [],
+        "sidelined": [],
+        "expectedLineups": [],
+    }
+
+    home_goals = _extract_number(goals.get("home"))
+    away_goals = _extract_number(goals.get("away"))
+    if home_goals is not None and away_goals is not None:
+        normalized["scores"] = [
+            {"participant_id": home_id, "score": home_goals, "description": "current"},
+            {"participant_id": away_id, "score": away_goals, "description": "current"},
+        ]
+    return normalized
+
+
+def _api_football_recent_fixtures(team_id: int, start_key: str, end_key: str) -> list[dict]:
+    rows = _api_football_get(
+        "fixtures",
+        team=team_id,
+        from_=start_key,
+        to=end_key,
+        status="FT-AET-PEN",
+    )
+    normalized: list[dict] = []
+    for row in rows:
+        item = _normalize_api_football_fixture(row)
+        if item is not None:
+            normalized.append(item)
+    return normalized
+
+
+def _api_football_head_to_head(home_team_id: int, away_team_id: int) -> list[dict]:
+    rows = _api_football_get(
+        "fixtures/headtohead",
+        h2h=f"{home_team_id}-{away_team_id}",
+        last=5,
+        status="FT-AET-PEN",
+    )
+    normalized: list[dict] = []
+    for row in rows:
+        item = _normalize_api_football_fixture(row)
+        if item is not None:
+            normalized.append(item)
+    return normalized
+
+
+def _api_football_analysis(ext: ExternalOdds, yes_side: str, end_date) -> Optional[MatchupAnalysis]:
+    if "soccer" not in (ext.sport or "").lower():
+        return None
+
+    home_team = _search_team_api_football(ext.home_team)
+    away_team = _search_team_api_football(ext.away_team)
+    if home_team is None or away_team is None:
+        return None
+
+    home_team_id = _to_int(home_team.get("id"))
+    away_team_id = _to_int(away_team.get("id"))
+    if home_team_id is None or away_team_id is None:
+        return None
+
+    end_key = end_date.date().isoformat()
+    start_key = (end_date.date() - timedelta(days=config.MATCH_LOOKBACK_DAYS)).isoformat()
+
+    home_fixtures = _api_football_recent_fixtures(home_team_id, start_key, end_key)
+    away_fixtures = _api_football_recent_fixtures(away_team_id, start_key, end_key)
+    h2h_fixtures = _api_football_head_to_head(home_team_id, away_team_id)
+
+    home_strength = _build_strength(home_team, home_fixtures, focus_home=True, upcoming_fixture=None)
+    away_strength = _build_strength(away_team, away_fixtures, focus_home=False, upcoming_fixture=None)
+    if home_strength is None or away_strength is None:
+        return None
+
+    return _build_matchup_from_strengths(
+        provider="api_football",
+        ext=ext,
+        yes_side=yes_side,
+        home_strength=home_strength,
+        away_strength=away_strength,
+        h2h_fixtures=h2h_fixtures,
+        confidence_base=0.26,
+        extra_notes=[
+            "api-football fallback model uses goals-based form only",
+            "shots on target, xG, and lineups were not fetched from fallback provider",
+        ],
     )
 
 
@@ -766,17 +1059,40 @@ def get_matchup_analysis_for_market(
     if yes_side is None:
         return None
 
-    cache_key = f"{ext.event_key}:{yes_side}"
+    cache_key = f"{ext.event_key}:{yes_side}:{'|'.join(_provider_order())}"
     cached = _analysis_cache.get(cache_key)
     if cached is not None:
         return cached
 
     analysis: Optional[MatchupAnalysis] = None
-    if _sportmonks_enabled():
-        try:
-            analysis = _sportmonks_analysis(ext, yes_side, end_date)
-        except Exception as exc:
-            logger.debug(f"Sportmonks matchup analysis failed for {ext.event_key}: {exc}")
+    for provider in _provider_order():
+        if provider == "sportmonks":
+            if not _sportmonks_enabled():
+                continue
+            try:
+                analysis = _sportmonks_analysis(ext, yes_side, end_date)
+            except ProviderQuotaExceeded as exc:
+                logger.info(f"Match analytics provider skipped ({provider}): {exc}")
+                continue
+            except Exception as exc:
+                logger.debug(f"Sportmonks matchup analysis failed for {ext.event_key}: {exc}")
+                continue
+        elif provider == "api_football":
+            if not _api_football_enabled():
+                continue
+            try:
+                analysis = _api_football_analysis(ext, yes_side, end_date)
+            except ProviderQuotaExceeded as exc:
+                logger.info(f"Match analytics provider skipped ({provider}): {exc}")
+                continue
+            except Exception as exc:
+                logger.debug(f"API-Football matchup analysis failed for {ext.event_key}: {exc}")
+                continue
+        elif provider == "sportsbook_only":
+            analysis = _lightweight_analysis(ext, yes_side)
+
+        if analysis is not None:
+            break
 
     if analysis is None:
         analysis = _lightweight_analysis(ext, yes_side)
