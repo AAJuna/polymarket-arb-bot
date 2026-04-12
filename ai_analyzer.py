@@ -37,7 +37,7 @@ _AI_SCHEMA = {
         },
         "confidence": {
             "type": "number",
-            "description": "How confident in this prediction (0-1)"
+            "description": "Confidence in this recommendation given the available data (0-1). Anchor to the match model confidence when available."
         },
         "reasoning": {
             "type": "string",
@@ -45,7 +45,7 @@ _AI_SCHEMA = {
         },
         "edge_detected": {
             "type": "boolean",
-            "description": "Is the detected edge real or a data artifact?"
+            "description": "Does the data support a real trading edge for the recommended side?"
         },
         "recommended_side": {
             "type": "string",
@@ -313,7 +313,7 @@ REJECT only if obviously bad: data mismatch, nonsensical edge, or clearly noise.
 
         try:
             response = self._client.messages.create(
-                model=config.AI_MODEL,
+                model=config.AI_DEEP_MODEL,
                 max_tokens=config.AI_MAX_TOKENS,
                 messages=[{"role": "user", "content": prompt}],
                 tools=[{
@@ -391,7 +391,7 @@ REJECT only if obviously bad: data mismatch, nonsensical edge, or clearly noise.
         """Connectivity test — minimal API call."""
         try:
             resp = self._client.messages.create(
-                model=config.AI_MODEL,
+                model=config.AI_DEEP_MODEL,
                 max_tokens=10,
                 messages=[{"role": "user", "content": "Say OK"}],
             )
@@ -409,10 +409,9 @@ REJECT only if obviously bad: data mismatch, nonsensical edge, or clearly noise.
 
     def log_usage(self) -> None:
         logger.info(
-            f"AI usage: {self._total_calls} calls | "
-            f"in={self._total_input_tokens:,} tok | "
-            f"out={self._total_output_tokens:,} tok | "
-            f"cost=${self._estimated_cost_usd:.4f}"
+            f"AI usage — filter: {self._filter_calls} calls ${self._filter_cost_usd:.4f} | "
+            f"deep: {self._total_calls} calls ${self._estimated_cost_usd:.4f} | "
+            f"total: ${self._filter_cost_usd + self._estimated_cost_usd:.4f}"
         )
 
     def _build_prompt(self, opp: "Opportunity") -> str:
@@ -460,7 +459,7 @@ REJECT only if obviously bad: data mismatch, nonsensical edge, or clearly noise.
             if ext.bookmaker_count < 5:
                 bookmaker_note += " (low count — treat as less reliable)"
 
-        return f"""You are a prediction market expert and sports analyst.
+        return f"""You are a prediction market expert and sports analyst making trade decisions.
 
 Market: {opp.question}
 Current YES price: ${opp.yes_price:.3f} | NO price: ${opp.no_price:.3f}
@@ -470,17 +469,20 @@ End date: {opp.end_date.strftime('%Y-%m-%d %H:%M UTC')}
 {odds_section}{bookmaker_note}
 {matchup_section}{longshot_warning}
 
-Assess whether the candidate trade has a real edge. Use the structured match model
-when present, and do not recommend the opposite side unless the evidence is strong
-enough to invalidate the candidate outright.
+You have access to a structured match model that uses Poisson simulation with
+recency-weighted xG, team form (last 8 matches, decay=0.82), head-to-head records,
+and home/away advantage (12%). When the model data is present above, use its
+computed probabilities as your PRIMARY ANCHOR. Your confidence should reflect the
+data quality and edge reliability, not general uncertainty about sports outcomes.
 
-Consider:
-- Does the candidate side's fair probability exceed its market price by a defensible margin?
-- Do recent form, head-to-head, home/away split, shots on target, xG proxy, and lineup notes support the edge?
-- Is the pricing discrepancy likely to persist until expiry?
-- Are there upcoming events (injuries, news) that could affect the outcome?
-- Is the market liquid enough for meaningful edge?
-- For low-priced tokens (<$0.20): apply extra scrutiny but do not auto-reject — evaluate the actual evidence.
+For non-football sports without match model data, evaluate based on sportsbook
+consensus quality (bookmaker count, line movement) and edge magnitude.
+
+Decision criteria:
+- If model fair probability > market price by a meaningful margin → recommend the candidate side
+- If sportsbook consensus strongly supports the edge → recommend the candidate side
+- Only SKIP if you have specific evidence AGAINST the trade, not general uncertainty
+- Only recommend the OPPOSITE side if evidence clearly invalidates the candidate
 
 For predicted_probability, return the estimated true probability of your recommended
 side being correct, not the market YES probability unless you recommend YES.
