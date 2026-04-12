@@ -76,6 +76,19 @@ ODDS_SPORTS: list = [
     "basketball_ncaab",
     "tennis_atp_french_open",
     "soccer_uefa_champs_league",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
+    "soccer_netherlands_eredivisie",
+    "soccer_portugal_primeira_liga",
+    "soccer_brazil_serie_a",
+    "soccer_australia_aleague",
+    "soccer_denmark_superliga",
+    "soccer_uefa_europa_league",
+    "soccer_china_superleague",
+    "soccer_turkey_super_league",
+    "soccer_efl_champ",
 ]
 ODDS_CACHE_TTL: int = int(os.getenv("ODDS_CACHE_TTL", "900"))  # seconds (15 min default)
 MIN_BOOKMAKER_COUNT: int = int(os.getenv("MIN_BOOKMAKER_COUNT", "3"))

@@ -425,7 +425,7 @@ def run() -> None:
                     open_market_ids = {
                         p.get("market_id") for p in open_positions_snapshot
                     }
-                min_required_edge = max(config.MIN_EDGE_PCT, config.AI_MIN_EDGE_PCT)
+                min_required_edge = config.MIN_EDGE_PCT
                 executable_opportunities = [
                     o for o in opportunities
                     if o.type != "same_market" or config.ENABLE_SAME_MARKET_EXECUTION
