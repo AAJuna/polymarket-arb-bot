@@ -174,12 +174,13 @@ class Portfolio:
                 if k in PortfolioState.__dataclass_fields__
             })
         migrated = self._normalize_loaded_positions()
+        reconciled = self._reconcile_counters()
         logger.info(
             f"Portfolio loaded ({source}): bankroll=${self.state.current_bankroll:.2f} "
             f"trades={self.state.total_trades}"
         )
         self.check_day_reset()
-        if migrated:
+        if migrated or reconciled:
             self.save()
         return True
 
@@ -913,6 +914,85 @@ class Portfolio:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _reconcile_counters(self) -> bool:
+        """Re-derive trade counters from trade_history so they stay consistent.
+
+        Returns True if any value was corrected.
+        """
+        with self._lock:
+            history = self.state.trade_history
+            if not history:
+                return False
+
+            expected_total = len(history) + len(self.state.open_positions)
+            expected_wins = sum(
+                1 for t in history if (t.get("pnl") or 0) > 0
+            )
+
+            # Walk history in chronological order to find current streak
+            expected_cons_wins = 0
+            expected_cons_losses = 0
+            for t in history:
+                pnl = t.get("pnl") or 0
+                if pnl > 0:
+                    expected_cons_wins += 1
+                    expected_cons_losses = 0
+                else:
+                    expected_cons_losses += 1
+                    expected_cons_wins = 0
+
+            changed = False
+
+            if self.state.total_trades != expected_total:
+                logger.warning(
+                    f"Reconcile: total_trades {self.state.total_trades} → {expected_total}"
+                )
+                self.state.total_trades = expected_total
+                changed = True
+
+            if self.state.winning_trades != expected_wins:
+                logger.warning(
+                    f"Reconcile: winning_trades {self.state.winning_trades} → {expected_wins}"
+                )
+                self.state.winning_trades = expected_wins
+                changed = True
+
+            if self.state.consecutive_wins != expected_cons_wins:
+                logger.warning(
+                    f"Reconcile: consecutive_wins {self.state.consecutive_wins} → {expected_cons_wins}"
+                )
+                self.state.consecutive_wins = expected_cons_wins
+                changed = True
+
+            if self.state.consecutive_losses != expected_cons_losses:
+                logger.warning(
+                    f"Reconcile: consecutive_losses {self.state.consecutive_losses} → {expected_cons_losses}"
+                )
+                self.state.consecutive_losses = expected_cons_losses
+                changed = True
+
+            # Rebuild peak from bankroll history if available
+            if self.state.bankroll_history:
+                hist_peak = max(
+                    entry.get("bankroll", 0) for entry in self.state.bankroll_history
+                )
+                if hist_peak > self.state.peak_bankroll:
+                    logger.warning(
+                        f"Reconcile: peak_bankroll {self.state.peak_bankroll:.2f} → {hist_peak:.2f}"
+                    )
+                    self.state.peak_bankroll = hist_peak
+                    changed = True
+
+            # Ensure day_start_bankroll is at least sensible
+            if self.state.day_start_bankroll <= 0 and self.state.starting_bankroll > 0:
+                self.state.day_start_bankroll = self.state.starting_bankroll
+                changed = True
+
+            if changed:
+                logger.info("Portfolio counters reconciled from trade history")
+
+            return changed
 
     def _update_peaks(self):
         """Must be called inside self._lock."""

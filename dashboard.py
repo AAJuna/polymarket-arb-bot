@@ -443,10 +443,31 @@ starting = data.get("starting_bankroll", 0)
 open_pos = data.get("open_positions", {})
 history = data.get("trade_history", [])
 bankroll_hist = data.get("bankroll_history", [])
-cons_wins = data.get("consecutive_wins", 0)
-cons_losses = data.get("consecutive_losses", 0)
-total_trades = data.get("total_trades", 0)
-winning = data.get("winning_trades", 0)
+
+# Derive counters from trade_history when snapshot values are stale
+if history:
+    total_trades = len(history) + len(open_pos)
+    winning = sum(1 for t in history if (t.get("pnl") or 0) > 0)
+    # Walk history to find current streak
+    cons_wins = 0
+    cons_losses = 0
+    for t in history:
+        if (t.get("pnl") or 0) > 0:
+            cons_wins += 1
+            cons_losses = 0
+        else:
+            cons_losses += 1
+            cons_wins = 0
+    # Reconstruct peak from bankroll_history
+    if bankroll_hist:
+        hist_peak = max(e.get("bankroll", 0) for e in bankroll_hist)
+        peak = max(peak, hist_peak)
+        data["peak_bankroll"] = peak
+else:
+    cons_wins = data.get("consecutive_wins", 0)
+    cons_losses = data.get("consecutive_losses", 0)
+    total_trades = data.get("total_trades", 0)
+    winning = data.get("winning_trades", 0)
 
 open_cost = sum(p.get("cost_basis", 0) for p in open_pos.values())
 realized_bankroll = current + open_cost
