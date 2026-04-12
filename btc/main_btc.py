@@ -303,6 +303,8 @@ def run() -> None:
     current_position_id: Optional[str] = None
     ai_decision: Optional[object] = None  # BtcAIAnalysis
     done_condition_ids: set[str] = set()  # don't re-enter traded or skipped windows
+    ai_pending_thread = None  # background AI thread
+    ai_result_box: list = []  # result from AI thread
     cycle = 0
     last_status_log = 0.0
     last_resolution_check = 0.0
@@ -360,7 +362,7 @@ def run() -> None:
                 _sleep(0.5, running)
 
             # ============================================================
-            # COLLECTING: Gather price data for AI analysis (first 60s)
+            # COLLECTING: Gather price data, then send to AI in background
             # ============================================================
             elif state == State.COLLECTING:
                 now = datetime.now(timezone.utc)
@@ -368,44 +370,54 @@ def run() -> None:
 
                 _write_signal_status(state, rtds, engine, current_market, ai_stats=ai.stats, ai_decision=ai_decision)
 
-                if elapsed >= cfg.AI_COLLECT_SEC:
-                    # Send data to Haiku
+                if elapsed >= cfg.AI_COLLECT_SEC and ai_pending_thread is None:
+                    # Launch AI call in background thread (non-blocking)
                     btc_price = rtds.get_btc_price() or 0.0
                     price_history = rtds.get_price_history(seconds=int(cfg.AI_COLLECT_SEC))
                     url = _market_url(current_market)
+                    _mkt_ref = current_market  # capture for thread
+                    logger.info(f"Sending {len(price_history)} ticks to AI...")
 
-                    logger.info(
-                        f"Sending {len(price_history)} ticks to AI for analysis..."
-                    )
+                    import threading as _th
 
-                    if ai.enabled:
-                        ai_decision = ai.analyze(
-                            price_history=price_history,
-                            up_price=current_market.up_price,
-                            down_price=current_market.down_price,
-                            btc_price=btc_price,
-                            time_remaining_sec=(current_market.window_end - now).total_seconds(),
-                            market_question=current_market.question,
-                            market_url=url,
-                        )
-                    else:
-                        # Fallback to momentum signal engine
-                        sig = engine.get_signal(current_market.up_price, current_market.down_price)
-                        if sig and sig.confidence >= cfg.MIN_CONFIDENCE:
-                            from btc.ai_analyzer import BtcAIAnalysis
-                            ai_decision = BtcAIAnalysis(
-                                side=sig.side,
-                                confidence=sig.confidence,
-                                strategy="momentum_fallback",
-                                reasoning=f"Momentum signal {sig.side} edge={sig.edge_pct:.1f}%",
+                    def _ai_call():
+                        if ai.enabled:
+                            r = ai.analyze(
+                                price_history=price_history,
+                                up_price=_mkt_ref.up_price,
+                                down_price=_mkt_ref.down_price,
+                                btc_price=btc_price,
+                                time_remaining_sec=(_mkt_ref.window_end - datetime.now(timezone.utc)).total_seconds(),
+                                market_question=_mkt_ref.question,
+                                market_url=url,
                             )
+                        else:
+                            sig = engine.get_signal(_mkt_ref.up_price, _mkt_ref.down_price)
+                            if sig and sig.confidence >= cfg.MIN_CONFIDENCE:
+                                from btc.ai_analyzer import BtcAIAnalysis
+                                r = BtcAIAnalysis(
+                                    side=sig.side, confidence=sig.confidence,
+                                    strategy="momentum_fallback",
+                                    reasoning=f"Momentum {sig.side} edge={sig.edge_pct:.1f}%",
+                                )
+                            else:
+                                r = None
+                        ai_result_box.append(r)
+
+                    ai_result_box.clear()
+                    ai_pending_thread = _th.Thread(target=_ai_call, daemon=True)
+                    ai_pending_thread.start()
+
+                # Check if AI thread finished
+                if ai_pending_thread is not None and not ai_pending_thread.is_alive():
+                    ai_decision = ai_result_box[0] if ai_result_box else None
+                    ai_pending_thread = None
 
                     if ai_decision and ai_decision.is_valid:
                         logger.info(
                             f"AI decision: {ai_decision.side}  "
                             f"conf={ai_decision.confidence:.0%}  "
-                            f"strategy={ai_decision.strategy}  "
-                            f"| Waiting for entry at t={cfg.AI_ENTRY_AT_SEC:.0f}s"
+                            f"strategy={ai_decision.strategy}"
                         )
                         state = State.ANALYZING
                     else:
