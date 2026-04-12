@@ -401,7 +401,7 @@ if data:
     bot_status = "ONLINE"
     status_color = C_PRIMARY
 
-st.markdown(f"""
+st.html(f"""
 <div class="topbar">
   <div class="logo">
     <div class="logo-icon">⚔️</div>
@@ -425,7 +425,7 @@ st.markdown(f"""
     </div>
   </div>
 </div>
-""", unsafe_allow_html=True)
+""")
 
 if not data:
     st.error("Portfolio file not found — is the bot running?")
@@ -469,15 +469,15 @@ blocked_cons = cons_losses >= config.CONSECUTIVE_LOSS_PAUSE
 # ---------------------------------------------------------------------------
 
 if paused:
-    st.markdown(f'<div class="status-pill pill-yellow"><span class="dot"></span>PAUSED — CONSECUTIVE LOSSES: {cons_losses}</div>', unsafe_allow_html=True)
+    st.html(f'<div class="status-pill pill-yellow"><span class="dot"></span>PAUSED — CONSECUTIVE LOSSES: {cons_losses}</div>')
 elif blocked_daily:
-    st.markdown(f'<div class="status-pill pill-red"><span class="dot"></span>BLOCKED — DAILY LOSS LIMIT {daily_loss:.1f}% / {limit_pct:.0f}%</div>', unsafe_allow_html=True)
+    st.html(f'<div class="status-pill pill-red"><span class="dot"></span>BLOCKED — DAILY LOSS LIMIT {daily_loss:.1f}% / {limit_pct:.0f}%</div>')
 elif blocked_drawdown:
-    st.markdown(f'<div class="status-pill pill-red"><span class="dot"></span>BLOCKED — MAX DRAWDOWN {dd:.1f}%</div>', unsafe_allow_html=True)
+    st.html(f'<div class="status-pill pill-red"><span class="dot"></span>BLOCKED — MAX DRAWDOWN {dd:.1f}%</div>')
 elif blocked_cons:
-    st.markdown(f'<div class="status-pill pill-yellow"><span class="dot"></span>PAUSING — {cons_losses} CONSECUTIVE LOSSES</div>', unsafe_allow_html=True)
+    st.html(f'<div class="status-pill pill-yellow"><span class="dot"></span>PAUSING — {cons_losses} CONSECUTIVE LOSSES</div>')
 else:
-    st.markdown('<div class="status-pill pill-green"><span class="dot"></span>BOT ACTIVE — SCANNING MARKETS</div>', unsafe_allow_html=True)
+    st.html('<div class="status-pill pill-green"><span class="dot"></span>BOT ACTIVE — SCANNING MARKETS</div>')
 
 # ---------------------------------------------------------------------------
 # Tabs
@@ -496,43 +496,43 @@ with tab_overview:
     c1, c2, c3, c4 = st.columns(4)
 
     with c1:
-        st.markdown(neon_stat_card(
+        st.html(neon_stat_card(
             "TOTAL EQUITY",
             f"${realized_bankroll:,.2f}",
             f"{fmt_usd(total_pnl)} ({roi:+.1f}% ROI)",
             pnl_color(total_pnl),
-        ), unsafe_allow_html=True)
+        ))
 
     with c2:
         daily_pct = abs(daily_pnl) / day_start * 100 if day_start > 0 else 0
-        st.markdown(neon_stat_card(
+        st.html(neon_stat_card(
             "TODAY P&L",
             fmt_usd(daily_pnl),
             f"{fmt_pct(daily_pct if daily_pnl >= 0 else -daily_pct)} today",
             pnl_color(daily_pnl),
-        ), unsafe_allow_html=True)
+        ))
 
     with c3:
         streak = f"W{cons_wins}" if cons_wins > 0 else (f"L{cons_losses}" if cons_losses > 0 else "—")
-        st.markdown(neon_stat_card(
+        st.html(neon_stat_card(
             "WIN RATE",
             f"{win_rate:.1f}%",
             f"{total_trades} trades · {streak}",
             "c-amber",
-        ), unsafe_allow_html=True)
+        ))
 
     with c4:
-        st.markdown(neon_stat_card(
+        st.html(neon_stat_card(
             "OPEN EXPOSURE",
             f"${open_cost:,.2f}",
             f"{len(open_pos)} positions active",
             "c-white",
-        ), unsafe_allow_html=True)
+        ))
 
-    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+    st.html('<div class="sep"></div>')
 
     # Equity Curve Chart
-    st.markdown('<div class="section-hdr">// EQUITY CURVE</div>', unsafe_allow_html=True)
+    st.html('<div class="section-hdr">// EQUITY CURVE</div>')
 
     if bankroll_hist:
         eq_df = pd.DataFrame(bankroll_hist)
@@ -589,56 +589,56 @@ with tab_overview:
             showlegend=False,
             yaxis_tickprefix="$",
         )
-        st.plotly_chart(fig_equity, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_equity, width="stretch", config={"displayModeBar": False})
     else:
-        st.markdown(
+        st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO EQUITY DATA YET — SNAPSHOTS RECORDED EACH SAVE CYCLE</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+    st.html('<div class="sep"></div>')
 
     # Bottom row: Risk mini + Recent trades
     bot_left, bot_right = st.columns(2)
 
     with bot_left:
-        st.markdown('<div class="section-hdr">// RISK STATUS</div>', unsafe_allow_html=True)
+        st.html('<div class="section-hdr">// RISK STATUS</div>')
 
         dl_ratio = min(daily_loss / limit_pct, 1.0) if limit_pct > 0 else 0.0
         dl_color = C_DANGER if daily_loss >= limit_pct * 0.8 else (C_WARNING if daily_loss >= limit_pct * 0.5 else C_PRIMARY)
-        st.markdown(f'''
+        st.html(f'''
         <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{dl_color};margin-bottom:4px;">
           <span>DAILY LOSS</span><span>{daily_loss:.1f}% / {limit_pct:.0f}%</span>
         </div>
         <div style="height:4px;background:#00ff4115;border-radius:2px;overflow:hidden;margin-bottom:12px;">
           <div style="width:{dl_ratio*100:.0f}%;height:100%;background:{dl_color};box-shadow:0 0 6px {dl_color};border-radius:2px;"></div>
-        </div>''', unsafe_allow_html=True)
+        </div>''')
 
         dd_stop = config.DRAWDOWN_STOP_THRESHOLD * 100
         dd_ratio = min(dd / dd_stop, 1.0) if dd_stop > 0 else 0.0
         dd_color = C_DANGER if dd >= config.DRAWDOWN_REDUCE_THRESHOLD * 100 else (C_WARNING if dd >= dd_stop * 0.5 else C_PRIMARY)
-        st.markdown(f'''
+        st.html(f'''
         <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{dd_color};margin-bottom:4px;">
           <span>DRAWDOWN</span><span>{dd:.1f}% / {dd_stop:.0f}%</span>
         </div>
         <div style="height:4px;background:#ffaa0015;border-radius:2px;overflow:hidden;margin-bottom:12px;">
           <div style="width:{dd_ratio*100:.0f}%;height:100%;background:{dd_color};box-shadow:0 0 6px {dd_color};border-radius:2px;"></div>
-        </div>''', unsafe_allow_html=True)
+        </div>''')
 
         pause_at = config.CONSECUTIVE_LOSS_PAUSE
         cl_ratio = min(cons_losses / pause_at, 1.0) if pause_at > 0 else 0.0
         cl_color = C_DANGER if cons_losses >= pause_at * 0.7 else C_PRIMARY
-        st.markdown(f'''
+        st.html(f'''
         <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{cl_color};margin-bottom:4px;">
           <span>LOSS STREAK</span><span>{cons_losses} / {pause_at}</span>
         </div>
         <div style="height:4px;background:#00ff4115;border-radius:2px;overflow:hidden;">
           <div style="width:{cl_ratio*100:.0f}%;height:100%;background:{cl_color};box-shadow:0 0 6px {cl_color};border-radius:2px;"></div>
-        </div>''', unsafe_allow_html=True)
+        </div>''')
 
     with bot_right:
-        st.markdown('<div class="section-hdr">// RECENT TRADES</div>', unsafe_allow_html=True)
+        st.html('<div class="section-hdr">// RECENT TRADES</div>')
 
         if history:
             recent = list(reversed(history))[:5]
@@ -655,15 +655,15 @@ with tab_overview:
                   <span style="color:{side_color};flex:0.4;text-align:center;">{side}</span>
                   <span style="{pc};flex:0.6;text-align:right;">{fmt_usd(pnl_val)}</span>
                 </div>'''
-            st.markdown(f'''
+            st.html(f'''
             <div style="border:1px solid #00ff4120;padding:10px;background:#00ff4105;">
               <div style="display:flex;justify-content:space-between;font-size:0.55rem;color:#00ff4140;border-bottom:1px solid #00ff4110;padding-bottom:4px;margin-bottom:4px;">
                 <span style="flex:2;">MARKET</span><span style="flex:0.4;text-align:center;">SIDE</span><span style="flex:0.6;text-align:right;">P&L</span>
               </div>
               {rows_html}
-            </div>''', unsafe_allow_html=True)
+            </div>''')
         else:
-            st.markdown(
+            st.html(
                 '<div style="color:#00ff4140;font-size:0.65rem;padding:12px 0">// NO CLOSED TRADES YET</div>',
                 unsafe_allow_html=True,
             )
@@ -674,7 +674,7 @@ with tab_overview:
 
 with tab_positions:
     # --- Open Positions Table ---
-    st.markdown(f'<div class="section-hdr">// OPEN POSITIONS [{len(open_pos)}]</div>', unsafe_allow_html=True)
+    st.html(f'<div class="section-hdr">// OPEN POSITIONS [{len(open_pos)}]</div>')
 
     if open_pos:
         rows_html = ""
@@ -709,7 +709,7 @@ with tab_positions:
               <td style="padding:7px 8px;text-align:right;color:{C_WARNING};">{ends_str}</td>
               <td style="padding:7px 8px;text-align:center;"><a href="{url}" target="_blank" style="color:#00ff4180;text-decoration:none;font-size:0.75rem;">&#8599;</a></td>
             </tr>"""
-        st.markdown(f"""
+        st.html(f"""
         <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
             <thead>
@@ -728,18 +728,18 @@ with tab_positions:
             </tbody>
           </table>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     else:
-        st.markdown(
+        st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO OPEN POSITIONS</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+    st.html('<div class="sep"></div>')
 
     # --- Trade History Table ---
-    st.markdown(f'<div class="section-hdr">// TRADE HISTORY [{len(history)} CLOSED]</div>', unsafe_allow_html=True)
+    st.html(f'<div class="section-hdr">// TRADE HISTORY [{len(history)} CLOSED]</div>')
 
     if history:
         rows_html = ""
@@ -785,7 +785,7 @@ with tab_positions:
               <td style="padding:7px 8px;text-align:right;color:#666;">{closed_str}</td>
               <td style="padding:7px 8px;text-align:center;"><a href="{url}" target="_blank" style="color:#00ff4180;text-decoration:none;font-size:0.75rem;">&#8599;</a></td>
             </tr>"""
-        st.markdown(f"""
+        st.html(f"""
         <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
             <thead>
@@ -804,18 +804,18 @@ with tab_positions:
             </tbody>
           </table>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     else:
-        st.markdown(
+        st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO CLOSED TRADES YET</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+    st.html('<div class="sep"></div>')
 
     # --- P&L Distribution Chart ---
-    st.markdown('<div class="section-hdr">// P&L DISTRIBUTION</div>', unsafe_allow_html=True)
+    st.html('<div class="section-hdr">// P&L DISTRIBUTION</div>')
 
     if history:
         pnl_values = [p.get("pnl", 0) or 0 for p in history]
@@ -847,9 +847,9 @@ with tab_positions:
             "xaxis": {**layout.get("xaxis", {}), "showticklabels": False},
         })
         fig_pnl.update_layout(**layout)
-        st.plotly_chart(fig_pnl, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_pnl, width="stretch", config={"displayModeBar": False})
     else:
-        st.markdown(
+        st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO TRADE DATA</div>',
             unsafe_allow_html=True,
@@ -862,7 +862,7 @@ with tab_positions:
 with tab_analytics:
 
     # ── Strategy Expectancy ──────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr">// STRATEGY EXPECTANCY</div>', unsafe_allow_html=True)
+    st.html('<div class="section-hdr">// STRATEGY EXPECTANCY</div>')
 
     strat_data = strategy_report.get("by_strategy") or {}
 
@@ -898,7 +898,7 @@ with tab_analytics:
                 height=260,
                 showlegend=False,
             )
-            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(fig_donut, width="stretch", config={"displayModeBar": False})
 
         with col_legend:
             legend_html = ""
@@ -920,7 +920,7 @@ with tab_analytics:
                     </div>
                   </div>
                 </div>"""
-            st.markdown(f'<div style="padding:10px 0;">{legend_html}</div>', unsafe_allow_html=True)
+            st.html(f'<div style="padding:10px 0;">{legend_html}</div>')
 
         # Strategy table
         tbl_rows = ""
@@ -944,7 +944,7 @@ with tab_analytics:
               <td style="padding:7px 8px;text-align:right;color:#00e5ff;">{avg_edge_v:.1f}%</td>
               <td style="padding:7px 8px;text-align:right;color:#ff00ff;">{avg_ai_v:.1f}%</td>
             </tr>"""
-        st.markdown(f"""
+        st.html(f"""
         <div style="overflow-x:auto;margin-top:12px;">
           <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
             <thead>
@@ -963,18 +963,18 @@ with tab_analytics:
             </tbody>
           </table>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     else:
-        st.markdown(
+        st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO STRATEGY DATA YET</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+    st.html('<div class="sep"></div>')
 
     # ── Shadow Fill Report ───────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr">// SHADOW FILL REPORT</div>', unsafe_allow_html=True)
+    st.html('<div class="section-hdr">// SHADOW FILL REPORT</div>')
 
     shadow_by_strat = shadow_report.get("by_strategy") or {}
     shadow_recent = shadow_report.get("recent_resolved") or []
@@ -997,7 +997,7 @@ with tab_analytics:
               <td style="padding:7px 8px;text-align:right;color:{exp_col};text-shadow:0 0 6px {exp_col}80;">{exp:+.3f}</td>
               <td style="padding:7px 8px;text-align:right;color:#00e5ff;">{avg_edge_s:.1f}%</td>
             </tr>"""
-        st.markdown(f"""
+        st.html(f"""
         <div style="overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
             <thead>
@@ -1015,16 +1015,16 @@ with tab_analytics:
             </tbody>
           </table>
         </div>
-        """, unsafe_allow_html=True)
+        """)
     else:
-        st.markdown(
+        st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO SHADOW DATA</div>',
             unsafe_allow_html=True,
         )
 
     if shadow_recent:
-        st.markdown('<div style="font-size:0.55rem;color:#00ff4160;letter-spacing:2px;margin:14px 0 6px 0;">RECENT RESOLVED</div>', unsafe_allow_html=True)
+        st.html('<div style="font-size:0.55rem;color:#00ff4160;letter-spacing:2px;margin:14px 0 6px 0;">RECENT RESOLVED</div>')
         recent_rows = ""
         for item in shadow_recent:
             pnl_per_dollar = item.get("pnl_per_dollar", 0) or 0
@@ -1045,15 +1045,15 @@ with tab_analytics:
               <span style="color:#666;flex-shrink:0;width:90px;text-align:right;">{resolved_at}</span>
               <span style="flex-shrink:0;width:16px;text-align:center;">{link_html}</span>
             </div>"""
-        st.markdown(f'<div style="border:1px solid #00ff4120;padding:8px 10px;background:#00ff4105;">{recent_rows}</div>', unsafe_allow_html=True)
+        st.html(f'<div style="border:1px solid #00ff4120;padding:8px 10px;background:#00ff4105;">{recent_rows}</div>')
 
-    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+    st.html('<div class="sep"></div>')
 
     # ── AI Usage + Realtime Feed ─────────────────────────────────────────────
     col_ai, col_feed = st.columns(2)
 
     with col_ai:
-        st.markdown('<div class="section-hdr">// AI USAGE</div>', unsafe_allow_html=True)
+        st.html('<div class="section-hdr">// AI USAGE</div>')
         if ai_stats:
             total_calls = ai_stats.get("total_calls", 0) or 0
             est_cost = ai_stats.get("estimated_cost_usd", 0) or 0
@@ -1064,28 +1064,28 @@ with tab_analytics:
             out_price = getattr(config, "AI_OUTPUT_PRICE_PER_MTOK", 0)
             cards_ai = st.columns(2)
             with cards_ai[0]:
-                st.markdown(neon_stat_card(
+                st.html(neon_stat_card(
                     "TOTAL CALLS",
                     f"{total_calls:,}",
                     model_name,
                     "c-green",
-                ), unsafe_allow_html=True)
+                ))
             with cards_ai[1]:
-                st.markdown(neon_stat_card(
+                st.html(neon_stat_card(
                     "EST. COST",
                     f"${est_cost:.4f}",
                     f"in {in_tok:,} · out {out_tok:,} tok",
                     "c-amber",
-                ), unsafe_allow_html=True)
+                ))
         else:
-            st.markdown(
+            st.html(
                 '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
                 '// NO AI DATA</div>',
                 unsafe_allow_html=True,
             )
 
     with col_feed:
-        st.markdown('<div class="section-hdr">// REALTIME FEED</div>', unsafe_allow_html=True)
+        st.html('<div class="section-hdr">// REALTIME FEED</div>')
         if feed_status:
             connected = feed_status.get("connected", False)
             watched = feed_status.get("watched_assets", 0) or 0
@@ -1097,21 +1097,21 @@ with tab_analytics:
             status_col = "c-green" if connected else "c-red"
             cards_feed = st.columns(2)
             with cards_feed[0]:
-                st.markdown(neon_stat_card(
+                st.html(neon_stat_card(
                     "FEED STATUS",
                     status_label,
                     f"{watched}/{max_assets} assets · {cache_size} cached",
                     status_col,
-                ), unsafe_allow_html=True)
+                ))
             with cards_feed[1]:
-                st.markdown(neon_stat_card(
+                st.html(neon_stat_card(
                     "WIRE TRAFFIC",
                     f"{msg_count:,}",
                     f"{reconnects} reconnect(s)",
                     "c-white",
-                ), unsafe_allow_html=True)
+                ))
         else:
-            st.markdown(
+            st.html(
                 '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
                 '// FEED OFFLINE</div>',
                 unsafe_allow_html=True,
@@ -1158,7 +1158,7 @@ with tab_risk:
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
         )
-        st.plotly_chart(fig_dl, use_container_width=True, key="gauge_dl")
+        st.plotly_chart(fig_dl, width="stretch", key="gauge_dl")
         if blocked_daily:
             dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">✗ BLOCKED</div>'
         elif dl_ratio >= 0.8:
@@ -1166,7 +1166,7 @@ with tab_risk:
         else:
             headroom = dl_max - daily_loss
             dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ {headroom:.1f}% HEADROOM</div>'
-        st.markdown(dl_status, unsafe_allow_html=True)
+        st.html(dl_status)
 
     # Drawdown gauge
     dd_max = config.DRAWDOWN_STOP_THRESHOLD * 100
@@ -1194,7 +1194,7 @@ with tab_risk:
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
         )
-        st.plotly_chart(fig_dd, use_container_width=True, key="gauge_dd")
+        st.plotly_chart(fig_dd, width="stretch", key="gauge_dd")
         dd_reduce_threshold = config.DRAWDOWN_REDUCE_THRESHOLD * 100
         if blocked_drawdown:
             dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">✗ STOPPED</div>'
@@ -1202,7 +1202,7 @@ with tab_risk:
             dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">⚠ BET SIZE HALVED</div>'
         else:
             dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ NORMAL SIZING</div>'
-        st.markdown(dd_status, unsafe_allow_html=True)
+        st.html(dd_status)
 
     # Consecutive Losses gauge
     cl_max = float(config.CONSECUTIVE_LOSS_PAUSE) if config.CONSECUTIVE_LOSS_PAUSE > 0 else 5.0
@@ -1230,16 +1230,16 @@ with tab_risk:
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
         )
-        st.plotly_chart(fig_cl, use_container_width=True, key="gauge_cl")
+        st.plotly_chart(fig_cl, width="stretch", key="gauge_cl")
         if cons_wins > 0:
             cl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">STREAK: W{cons_wins}</div>'
         elif cons_losses > 0:
             cl_status = f'<div style="text-align:center;font-size:0.6rem;color:{cl_bar};">STREAK: L{cons_losses}</div>'
         else:
             cl_status = f'<div style="text-align:center;font-size:0.6rem;color:#00ff4160;">STREAK: NONE</div>'
-        st.markdown(cl_status, unsafe_allow_html=True)
+        st.html(cl_status)
 
-    st.markdown('<hr style="border:none;border-top:1px solid #00ff4120;margin:20px 0;">', unsafe_allow_html=True)
+    st.html('<hr style="border:none;border-top:1px solid #00ff4120;margin:20px 0;">')
 
     # ── Risk Detail Cards ─────────────────────────────────────────────────────
     d1, d2, d3 = st.columns(3)
@@ -1260,7 +1260,7 @@ with tab_risk:
 
     with d1:
         headroom_pct = max(dl_max - daily_loss, 0.0)
-        st.markdown(
+        st.html(
             f'<div style="{_card_style}">'
             f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// DAILY LOSS LIMIT</div>'
             + _detail_row("REALIZED LOSS", f"{daily_loss:.2f}%")
@@ -1271,7 +1271,7 @@ with tab_risk:
         )
 
     with d2:
-        st.markdown(
+        st.html(
             f'<div style="{_card_style}">'
             f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// DRAWDOWN CONTROL</div>'
             + _detail_row("CURRENT DD", f"{dd:.2f}%")
@@ -1282,7 +1282,7 @@ with tab_risk:
         )
 
     with d3:
-        st.markdown(
+        st.html(
             f'<div style="{_card_style}">'
             f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// LOSS STREAK CONTROL</div>'
             + _detail_row("CURRENT STREAK", f"L{cons_losses}" if cons_losses > 0 else (f"W{cons_wins}" if cons_wins > 0 else "—"))
@@ -1297,7 +1297,7 @@ with tab_risk:
 # ---------------------------------------------------------------------------
 
 with tab_config:
-    st.markdown('<div class="section-hdr">// CONFIGURATION</div>', unsafe_allow_html=True)
+    st.html('<div class="section-hdr">// CONFIGURATION</div>')
 
     def cfg_row(label: str, val: str) -> str:
         return (
@@ -1316,7 +1316,7 @@ with tab_config:
     cc1, cc2, cc3 = st.columns(3)
 
     with cc1:
-        st.markdown(
+        st.html(
             f'<div style="{_panel_style}">'
             f'<div style="{_panel_hdr}">// TRADING</div>'
             + cfg_row("Min Edge", f"{config.MIN_EDGE_PCT:.1f}%")
@@ -1332,7 +1332,7 @@ with tab_config:
         )
 
     with cc2:
-        st.markdown(
+        st.html(
             f'<div style="{_panel_style}">'
             f'<div style="{_panel_hdr}">// RISK</div>'
             + cfg_row("Daily Loss Limit (%)", f"{config.DAILY_LOSS_LIMIT_PCT * 100:.1f}%")
@@ -1349,7 +1349,7 @@ with tab_config:
         _ai_model_short = config.AI_MODEL.split("/")[-1] if "/" in config.AI_MODEL else config.AI_MODEL
         if len(_ai_model_short) > 20:
             _ai_model_short = _ai_model_short[:18] + ".."
-        st.markdown(
+        st.html(
             f'<div style="{_panel_style}">'
             f'<div style="{_panel_hdr}">// OPERATIONAL</div>'
             + cfg_row("Poll Interval (s)", str(config.POLL_INTERVAL))
@@ -1369,7 +1369,7 @@ with tab_config:
 # Footer
 # ---------------------------------------------------------------------------
 
-st.markdown(
+st.html(
     f'<div class="footer">MeQ0L15 · POLYMARKET WAR MACHINE · AUTO-REFRESH {REFRESH_SECONDS}s · {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>',
     unsafe_allow_html=True,
 )
