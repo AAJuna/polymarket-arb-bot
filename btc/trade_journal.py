@@ -82,7 +82,12 @@ def log_result(
 
 
 def run_review() -> dict:
-    """Analyze all closed trades and produce strategy breakdown."""
+    """Analyze all closed trades using Claude Opus for deep evaluation.
+
+    Collects all trade data, computes stats, then sends everything to
+    Opus for strategic recommendations. Saves both raw stats and AI
+    analysis to strategy_review.json.
+    """
     trades = _load_all()
 
     # Pair opens with closes by market_id
@@ -102,6 +107,10 @@ def run_review() -> dict:
                 "cost": open_data.get("cost", 0),
                 "pnl": t.get("pnl", 0),
                 "status": t.get("status", ""),
+                "reasoning": open_data.get("reasoning", ""),
+                "btc_price": open_data.get("btc_price", 0),
+                "up_price": open_data.get("up_price", 0),
+                "down_price": open_data.get("down_price", 0),
             })
 
     if not results:
@@ -168,24 +177,105 @@ def run_review() -> dict:
         "confidence_brackets": conf_stats,
     }
 
+    # Log basic stats
+    logger.info(f"{'='*50}")
+    logger.info(f"STRATEGY REVIEW — {total} trades")
+    logger.info(f"  Overall: {wins}W/{losses}L ({review['win_rate']}%) P&L=${total_pnl:+.2f}")
+    for s, d in strategies.items():
+        logger.info(f"  [{s}] {d['trades']}t {d['win_rate']}% wr P&L=${d['pnl']:+.2f} ROI={d['roi']}%")
+
+    # Send to Claude Opus for deep analysis
+    opus_analysis = _opus_review(results, review)
+    if opus_analysis:
+        review["opus_analysis"] = opus_analysis
+        logger.info(f"OPUS EVALUATION:")
+        for line in opus_analysis.split("\n"):
+            if line.strip():
+                logger.info(f"  {line.strip()}")
+
+    logger.info(f"{'='*50}")
+
     # Save review
     try:
         REVIEW_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(REVIEW_FILE, "w", encoding="utf-8") as f:
-            json.dump(review, f, indent=2)
+            json.dump(review, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
 
-    # Log summary
-    logger.info(f"{'='*50}")
-    logger.info(f"STRATEGY REVIEW — {total} trades")
-    logger.info(f"  Overall: {wins}W/{losses}L ({review['win_rate']}%) P&L=${total_pnl:+.2f}")
-    logger.info(f"  Avg win: ${avg_win:+.2f}  Avg loss: ${avg_loss:+.2f}")
-    for s, d in strategies.items():
-        logger.info(f"  [{s}] {d['trades']}t {d['win_rate']}% wr P&L=${d['pnl']:+.2f} ROI={d['roi']}%")
-    logger.info(f"{'='*50}")
-
     return review
+
+
+def _opus_review(results: list[dict], stats: dict) -> Optional[str]:
+    """Send trade data to Claude Opus for strategic evaluation."""
+    try:
+        import os
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return None
+
+        from anthropic import Anthropic
+        client = Anthropic(api_key=api_key)
+    except Exception:
+        return None
+
+    # Build trade summary for Opus
+    trade_lines = []
+    for r in results[-50:]:
+        wl = "WIN" if r["pnl"] > 0 else "LOSS"
+        trade_lines.append(
+            f"  {r['market_id']} | {r['side']} | {r['strategy']} | "
+            f"conf={r['confidence']:.0%} | cost=${r['cost']:.2f} | "
+            f"pnl=${r['pnl']:+.2f} | {wl}"
+        )
+    trades_str = "\n".join(trade_lines)
+
+    strat_lines = []
+    for s, d in stats.get("strategies", {}).items():
+        strat_lines.append(
+            f"  {s}: {d['trades']} trades, {d['win_rate']}% win rate, "
+            f"P&L=${d['pnl']:+.2f}, ROI={d['roi']}%"
+        )
+    strat_str = "\n".join(strat_lines)
+
+    prompt = f"""You are evaluating a BTC 5-minute prediction bot on Polymarket.
+The bot uses Claude Haiku to analyze 60 seconds of BTC price data, then decides UP or DOWN.
+
+PERFORMANCE SUMMARY:
+- Total trades: {stats['total_trades']}
+- Win rate: {stats['win_rate']}%
+- Total P&L: ${stats['total_pnl']:+.2f}
+- Avg win: ${stats['avg_win']:+.2f}, Avg loss: ${stats['avg_loss']:+.2f}
+
+STRATEGY BREAKDOWN:
+{strat_str}
+
+CONFIDENCE BRACKETS:
+{json.dumps(stats.get('confidence_brackets', {}), indent=2)}
+
+RECENT TRADES:
+{trades_str}
+
+EVALUATE:
+1. Which strategy performs best and why?
+2. Should the bot favor one strategy over another?
+3. Is the confidence calibrated well? (Do high-confidence trades actually win more?)
+4. What patterns do you see in the losses?
+5. Specific recommendations to improve win rate and P&L.
+6. Should position sizing change based on the data?
+
+Be concise and actionable. Focus on what to CHANGE, not what's working fine."""
+
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-5-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text
+    except Exception as e:
+        logger.warning(f"Opus review failed: {e}")
+        return None
 
 
 def _append(entry: dict) -> None:
