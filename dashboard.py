@@ -7,6 +7,7 @@ Run: streamlit run dashboard.py
 import json
 import time
 from datetime import datetime, timezone
+from html import escape as html_esc
 from pathlib import Path
 
 import pandas as pd
@@ -498,7 +499,7 @@ with tab_overview:
         st.markdown(neon_stat_card(
             "TOTAL EQUITY",
             f"${realized_bankroll:,.2f}",
-            f"{fmt_usd(total_pnl)} all-time",
+            f"{fmt_usd(total_pnl)} ({roi:+.1f}% ROI)",
             pnl_color(total_pnl),
         ), unsafe_allow_html=True)
 
@@ -576,7 +577,7 @@ with tab_overview:
                         line=dict(width=1, color=marker_color),
                     ),
                     hovertemplate=(
-                        f"{trade.get('question', '')[:40]}<br>"
+                        f"{html_esc(trade.get('question', '')[:40])}<br>"
                         f"P&L: {fmt_usd(pnl_val)}<extra></extra>"
                     ),
                     showlegend=False,
@@ -645,7 +646,7 @@ with tab_overview:
             for t in recent:
                 pnl_val = t.get("pnl", 0) or 0
                 pc = "color:#00ff41" if pnl_val >= 0 else "color:#ff0044"
-                market = t.get("question", "")[:35]
+                market = html_esc(t.get("question", "")[:35])
                 side = t.get("side", "")
                 side_color = "#00ff41" if side == "YES" else "#ff0044"
                 rows_html += f'''
@@ -678,7 +679,7 @@ with tab_positions:
     if open_pos:
         rows_html = ""
         for pos_id, pos in open_pos.items():
-            question = pos.get("question", "")[:50]
+            question = html_esc(pos.get("question", "")[:50])
             side = pos.get("side", "")
             if side == "YES":
                 side_badge = (
@@ -693,7 +694,7 @@ with tab_positions:
             entry = pos.get("entry_price", 0)
             shares = pos.get("size", 0)
             cost = pos.get("cost_basis", 0)
-            max_pnl = shares * (1.0 - entry) if side == "YES" else shares * entry
+            max_pnl = shares - cost
             end_date = pos.get("end_date", "")
             ends_str = fmt_end_window(end_date)
             url = build_market_url(pos)
@@ -761,11 +762,11 @@ with tab_positions:
                     '<span style="background:#ff004425;color:#ff0044;border:1px solid #ff004440;'
                     'border-radius:3px;padding:1px 6px;font-size:0.6rem;">LOSS &#9660;</span>'
                 )
-            question = pos.get("question", "")[:50]
+            question = html_esc(pos.get("question", "")[:50])
             side = pos.get("side", "")
             side_color = C_PRIMARY if side == "YES" else C_DANGER
             entry = pos.get("entry_price", 0)
-            pnl_color = C_PRIMARY if pnl_val >= 0 else C_DANGER
+            pnl_col = C_PRIMARY if pnl_val >= 0 else C_DANGER
             closed_at_raw = pos.get("closed_at", "")
             try:
                 closed_dt = pd.to_datetime(closed_at_raw)
@@ -780,7 +781,7 @@ with tab_positions:
               <td style="padding:7px 8px;text-align:center;color:{side_color};">{side}</td>
               <td style="padding:7px 8px;text-align:right;color:#aaa;">{entry:.3f}</td>
               <td style="padding:7px 8px;text-align:right;color:#aaa;">{exit_price:.3f}</td>
-              <td style="padding:7px 8px;text-align:right;color:{pnl_color};text-shadow:0 0 6px {pnl_color}80;">{fmt_usd(pnl_val)}</td>
+              <td style="padding:7px 8px;text-align:right;color:{pnl_col};text-shadow:0 0 6px {pnl_col}80;">{fmt_usd(pnl_val)}</td>
               <td style="padding:7px 8px;text-align:right;color:#666;">{closed_str}</td>
               <td style="padding:7px 8px;text-align:center;"><a href="{url}" target="_blank" style="color:#00ff4180;text-decoration:none;font-size:0.75rem;">&#8599;</a></td>
             </tr>"""
@@ -820,7 +821,7 @@ with tab_positions:
         pnl_values = [p.get("pnl", 0) or 0 for p in history]
         bar_colors = [C_PRIMARY if v >= 0 else C_DANGER for v in pnl_values]
         hover_texts = [
-            f"{p.get('question', '')[:40]}<br>{fmt_usd(p.get('pnl', 0) or 0)}"
+            f"{html_esc(p.get('question', '')[:40])}<br>{fmt_usd(p.get('pnl', 0) or 0)}"
             for p in history
         ]
         fig_pnl = go.Figure()
@@ -1028,7 +1029,7 @@ with tab_analytics:
         for item in shadow_recent:
             pnl_per_dollar = item.get("pnl_per_dollar", 0) or 0
             pnl_col = "#00ff41" if pnl_per_dollar >= 0 else "#ff0044"
-            question = (item.get("question") or "")[:50]
+            question = html_esc((item.get("question") or "")[:50])
             strat_label = item.get("strategy_type", "-")
             resolved_at = (item.get("resolved_at") or "")[:16]
             url = item.get("market_url", "")
