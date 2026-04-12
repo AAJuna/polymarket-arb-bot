@@ -32,7 +32,8 @@ EXCHANGE_ADDRESS: str = "0x4bFb41d5B3570DeFd03C39a9A4D8DE6Bd8B8982E"
 # Anthropic Claude
 # ---------------------------------------------------------------------------
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-AI_MODEL: str = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
+AI_MODEL: str = os.getenv("AI_MODEL", "claude-sonnet-4-6")
+AI_DEEP_MODEL: str = os.getenv("AI_DEEP_MODEL", AI_MODEL)
 AI_MAX_TOKENS: int = 512
 AI_CALLS_PER_MINUTE: int = 30
 AI_CACHE_TTL: int = 180  # seconds
@@ -42,10 +43,24 @@ AI_SCAN_LIMIT: int = int(os.getenv("AI_SCAN_LIMIT", "5"))
 AI_MIN_EDGE_PCT: float = float(os.getenv("AI_MIN_EDGE_PCT", "6.0"))
 AI_PAPER_MODE: str = os.getenv("AI_PAPER_MODE", "gate").strip().lower()  # gate | advisory
 
+# ---------------------------------------------------------------------------
+# OpenAI (filter stage)
+# ---------------------------------------------------------------------------
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+AI_FILTER_MODEL: str = os.getenv("AI_FILTER_MODEL", "gpt-4o-mini")
+AI_FILTER_CACHE_TTL: int = 1800   # seconds
+AI_FILTER_REJECT_CACHE_TTL: int = 3600  # seconds
+
 
 def _ai_pricing_per_mtok(model: str) -> tuple[float, float]:
     """Return approximate input/output USD per 1M tokens for dashboard cost tracking."""
     model = model.lower()
+    if "gpt-4o-mini" in model:
+        return 0.15, 0.60
+    if "gpt-4.1-nano" in model:
+        return 0.10, 0.40
+    if "gpt-4o" in model:
+        return 2.50, 10.0
     if "haiku-4-5" in model:
         return 1.0, 5.0
     if "sonnet" in model:
@@ -57,7 +72,8 @@ def _ai_pricing_per_mtok(model: str) -> tuple[float, float]:
     return 3.0, 15.0
 
 
-AI_INPUT_PRICE_PER_MTOK, AI_OUTPUT_PRICE_PER_MTOK = _ai_pricing_per_mtok(AI_MODEL)
+AI_INPUT_PRICE_PER_MTOK, AI_OUTPUT_PRICE_PER_MTOK = _ai_pricing_per_mtok(AI_DEEP_MODEL)
+AI_FILTER_INPUT_PRICE_PER_MTOK, AI_FILTER_OUTPUT_PRICE_PER_MTOK = _ai_pricing_per_mtok(AI_FILTER_MODEL)
 
 # ---------------------------------------------------------------------------
 # The Odds API
@@ -219,6 +235,8 @@ def validate() -> list[tuple[str, str]]:
         issues.append(("warning", "POLYMARKET_PRIVATE_KEY is not set"))
     if not ANTHROPIC_API_KEY or not ANTHROPIC_API_KEY.startswith("sk-"):
         issues.append(("warning", "ANTHROPIC_API_KEY is not set or looks invalid"))
+    if not OPENAI_API_KEY:
+        issues.append(("warning", "OPENAI_API_KEY not set — GPT filter stage will be skipped, all candidates go directly to deep analysis"))
     if not ODDS_API_KEY:
         issues.append(("warning", "ODDS_API_KEY not set — odds comparison arbitrage will be disabled"))
     if PAPER_TRADING:
