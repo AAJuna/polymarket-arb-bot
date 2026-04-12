@@ -18,6 +18,7 @@ from logger_setup import get_logger
 logger = get_logger(__name__)
 
 JOURNAL_FILE = Path("data/btc/trade_journal.jsonl")
+LEDGER_FILE = Path("data/btc/trade_ledger.jsonl")
 REVIEW_FILE = Path("data/btc/strategy_review.json")
 REVIEW_INTERVAL = 50  # evaluate every N trades
 
@@ -84,33 +85,39 @@ def log_result(
 def run_review() -> dict:
     """Analyze all closed trades using Claude Opus for deep evaluation.
 
-    Collects all trade data, computes stats, then sends everything to
-    Opus for strategic recommendations. Saves both raw stats and AI
-    analysis to strategy_review.json.
+    Reads from trade_ledger.jsonl (complete data from portfolio) instead
+    of trade_journal.jsonl (which may be incomplete). Computes stats,
+    then sends everything to Opus for strategic recommendations.
     """
-    trades = _load_all()
+    trades = _load_ledger()
 
-    # Pair opens with closes by market_id
+    # Pair opens with closes by position_id
     opens = {}
     results = []
     for t in trades:
+        pos = t.get("position", {})
+        pid = pos.get("position_id", "")
         if t.get("event") == "open":
-            opens[t["market_id"]] = t
+            opens[pid] = t
         elif t.get("event") == "close":
-            mid = t["market_id"]
-            open_data = opens.get(mid, {})
+            open_data = opens.get(pid, {})
+            open_pos = open_data.get("position", {})
             results.append({
-                "market_id": mid,
-                "strategy": open_data.get("strategy", t.get("strategy", "")),
-                "side": open_data.get("side", ""),
-                "confidence": open_data.get("confidence", 0),
-                "cost": open_data.get("cost", 0),
-                "pnl": t.get("pnl", 0),
-                "status": t.get("status", ""),
-                "reasoning": open_data.get("reasoning", ""),
-                "btc_price": open_data.get("btc_price", 0),
-                "up_price": open_data.get("up_price", 0),
-                "down_price": open_data.get("down_price", 0),
+                "market_id": pos.get("market_id", ""),
+                "strategy": pos.get("confidence_source", open_pos.get("confidence_source", "")),
+                "side": pos.get("side", open_pos.get("side", "")),
+                "confidence": pos.get("ai_confidence") or open_pos.get("ai_confidence") or 0,
+                "cost": pos.get("cost_basis", open_pos.get("cost_basis", 0)),
+                "pnl": pos.get("pnl", 0) or 0,
+                "status": pos.get("status", ""),
+                "reasoning": "",
+                "btc_price": 0,
+                "up_price": open_pos.get("entry_price", 0),
+                "down_price": 0,
+                "question": pos.get("question", open_pos.get("question", "")),
+                "entry_price": pos.get("entry_price", open_pos.get("entry_price", 0)),
+                "exit_price": pos.get("exit_price", 0) or 0,
+                "edge_pct": pos.get("signal_edge_pct", open_pos.get("signal_edge_pct", 0)),
             })
 
     if not results:
@@ -223,10 +230,11 @@ def _opus_review(results: list[dict], stats: dict) -> Optional[str]:
     trade_lines = []
     for r in results[-50:]:
         wl = "WIN" if r["pnl"] > 0 else "LOSS"
+        conf_str = f"{r['confidence']:.0%}" if r['confidence'] else "n/a"
         trade_lines.append(
             f"  {r['market_id']} | {r['side']} | {r['strategy']} | "
-            f"conf={r['confidence']:.0%} | cost=${r['cost']:.2f} | "
-            f"pnl=${r['pnl']:+.2f} | {wl}"
+            f"conf={conf_str} | entry={r.get('entry_price', 0):.2f} | "
+            f"cost=${r['cost']:.2f} | pnl=${r['pnl']:+.2f} | {wl}"
         )
     trades_str = "\n".join(trade_lines)
 
@@ -302,5 +310,23 @@ def _load_all() -> list[dict]:
     return entries
 
 
+def _load_ledger() -> list[dict]:
+    """Load from trade_ledger.jsonl (complete data from portfolio)."""
+    if not LEDGER_FILE.exists():
+        return _load_all()  # fallback to journal
+    entries = []
+    try:
+        with open(LEDGER_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entries.append(json.loads(line))
+    except Exception:
+        pass
+    return entries
+
+
 def _count_closed() -> int:
-    return sum(1 for t in _load_all() if t.get("event") == "close")
+    """Count closed trades from ledger (complete) or journal (fallback)."""
+    source = _load_ledger()
+    return sum(1 for t in source if t.get("event") == "close")
