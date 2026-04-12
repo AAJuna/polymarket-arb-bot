@@ -1472,320 +1472,208 @@ with tab_config:
 # ---------------------------------------------------------------------------
 
 with tab_btc:
-    # --- Live Signal Panel ---
-    if btc_signal:
-        sig_state = btc_signal.get("state", "UNKNOWN")
-        sig_btc = btc_signal.get("btc_price")
-        sig_strike = btc_signal.get("strike_price")
-        sig_market = btc_signal.get("market", {})
-        sig_data = btc_signal.get("signal", {})
-        sig_connected = btc_signal.get("rtds_connected", False)
-        sig_mid = sig_market.get("id", "")
-        sig_url = sig_market.get("url", "")
+    # ── Collect all data up front ──
+    _bs = btc_signal or {}
+    _bd = btc_data or {}
+    _sig_state = _bs.get("state", "OFFLINE")
+    _sig_btc = _bs.get("btc_price")
+    _sig_strike = _bs.get("strike_price")
+    _sig_mkt = _bs.get("market", {})
+    _sig_data = _bs.get("signal", {})
+    _sig_mid = _sig_mkt.get("id", "")
+    _sig_connected = _bs.get("rtds_connected", False)
+    _remaining = _sig_mkt.get("time_remaining_sec", 0)
+    _up_p = _sig_mkt.get("up_price", 0.5)
+    _down_p = _sig_mkt.get("down_price", 0.5)
 
-        # State badge with market ID
-        state_colors = {
-            "IDLE": ("pill-yellow", "SCANNING"),
-            "WAITING": ("pill-yellow", "WAITING"),
-            "COLLECTING": ("pill-yellow", "COLLECTING DATA"),
-            "ANALYZING": ("pill-green", "AI ANALYZING"),
-            "TRADING": ("pill-green", "POSITION OPEN"),
-            "RESOLVING": ("pill-yellow", "RESOLVING"),
-        }
-        pill_cls, pill_label = state_colors.get(sig_state, ("pill-red", sig_state))
-        id_label = f" | ID: {sig_mid}" if sig_mid else ""
-        st.html(
-            f'<div class="status-pill {pill_cls}">'
-            f'<span class="dot"></span>BTC: {pill_label}{id_label}'
-            f'</div>'
-        )
+    _bankroll = _bd.get("current_bankroll", 0)
+    _starting = _bd.get("starting_bankroll", 0)
+    _peak = _bd.get("peak_bankroll", 0)
+    _day_start = _bd.get("day_start_bankroll", 0)
+    _open_pos = _bd.get("open_positions", {})
+    _history = _bd.get("trade_history", [])
+    _bankroll_hist = _bd.get("bankroll_history", [])
+    _open_cost = sum(p.get("cost_basis", 0) for p in _open_pos.values())
+    _realized = _bankroll + _open_cost
+    _total_pnl = _realized - _starting if _starting > 0 else 0
+    _roi = (_realized - _starting) / _starting * 100 if _starting > 0 else 0
+    _daily_pnl = _realized - _day_start if _day_start > 0 else 0
+    _n_trades = len(_history) + len(_open_pos)
+    _wins = sum(1 for t in _history if (t.get("pnl") or 0) > 0)
+    _wr = (_wins / len(_history) * 100) if _history else 0
 
-        # Top row: BTC price large + key stats
-        top_left, top_right = st.columns([2, 1])
+    # ── TWO-COLUMN LAYOUT ──
+    col_left, col_right = st.columns([3, 2])
 
-        with top_left:
-            btc_display = f"${sig_btc:,.2f}" if sig_btc else "—"
-            remaining = sig_market.get("time_remaining_sec", 0)
-            mins = int(remaining // 60)
-            secs = int(remaining % 60)
-            timer = f"{mins}:{secs:02d}" if remaining > 0 else "—"
-            up_p = sig_market.get("up_price", 0.5)
-            down_p = sig_market.get("down_price", 0.5)
-            up_pct = up_p / (up_p + down_p) * 100 if (up_p + down_p) > 0 else 50
+    # ════════════════════════════════════════════════
+    # LEFT COLUMN: Equity curve + big stats
+    # ════════════════════════════════════════════════
+    with col_left:
+        # Big P&L header
+        pnl_c = "#00ff41" if _total_pnl >= 0 else "#ff0044"
+        st.html(f'''
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;padding:0 0 6px 0">
+          <div>
+            <span style="color:{pnl_c};font-size:2rem;font-weight:bold;text-shadow:0 0 20px {pnl_c}40">
+              {fmt_usd(_total_pnl)}
+            </span>
+            <span style="color:#00ff4160;font-size:0.75rem;margin-left:8px">{_roi:+.1f}% ROI</span>
+          </div>
+          <div style="display:flex;gap:16px;font-size:0.7rem">
+            <span style="color:#f7931a">{_wr:.0f}%</span>
+            <span style="color:#00ff4160">{_n_trades} trades</span>
+            <span style="color:#00ff4160">{_wins}W</span>
+          </div>
+        </div>''')
 
-            st.html(f'''
-            <div style="padding:10px 0">
-              <div style="color:#f7931a;font-size:0.6rem;letter-spacing:2px">BTC/USD</div>
-              <div style="color:#f7931a;font-size:2.2rem;font-weight:bold;text-shadow:0 0 20px rgba(247,147,26,0.4)">{btc_display}</div>
-              <div style="display:flex;gap:24px;margin-top:6px">
-                <span style="color:#00ff41;font-size:0.75rem">UP {up_p:.2f} ({up_pct:.0f}%)</span>
-                <span style="color:#ff0044;font-size:0.75rem">DOWN {down_p:.2f} ({100-up_pct:.0f}%)</span>
-                <span style="color:#00ff4160;font-size:0.75rem">WINDOW {timer}</span>
-              </div>
-            </div>''')
+        # Equity curve (large)
+        if _bankroll_hist:
+            _eq = pd.DataFrame(_bankroll_hist)
+            _eq["timestamp"] = pd.to_datetime(_eq["timestamp"])
+            _eq = _eq.sort_values("timestamp")
 
-        with top_right:
-            if sig_data:
-                side = sig_data.get("side", "—")
-                conf = sig_data.get("confidence", 0)
-                side_color = "#00ff41" if side == "UP" else "#ff0044" if side == "DOWN" else "#666"
-                st.html(f'''
-                <div style="text-align:center;padding:10px 0">
-                  <div style="color:#00ff4160;font-size:0.6rem;letter-spacing:2px">AI SIGNAL</div>
-                  <div style="color:{side_color};font-size:2rem;font-weight:bold;text-shadow:0 0 15px {side_color}40">{side}</div>
-                  <div style="color:#00ff4160;font-size:0.7rem">conf {conf:.0%}</div>
-                </div>''')
-            elif sig_state == "COLLECTING":
-                st.html(f'''
-                <div style="text-align:center;padding:10px 0">
-                  <div style="color:#ffaa00;font-size:0.6rem;letter-spacing:2px">COLLECTING</div>
-                  <div style="color:#ffaa00;font-size:1.5rem;text-shadow:0 0 10px rgba(255,170,0,0.3)">...</div>
-                  <div style="color:#00ff4160;font-size:0.7rem">gathering price data</div>
-                </div>''')
-            else:
-                st.html(f'''
-                <div style="text-align:center;padding:10px 0">
-                  <div style="color:#00ff4140;font-size:0.6rem;letter-spacing:2px">SIGNAL</div>
-                  <div style="color:#00ff4140;font-size:1.5rem">—</div>
-                </div>''')
-
-        # Market ID link
-        if sig_mid:
-            st.html(
-                f'<div style="color:#00ff4130;font-size:0.6rem;font-family:monospace;padding:2px 0">'
-                f'MKT {sig_mid}'
-                f'</div>'
-            )
-
-        st.html('<div class="sep"></div>')
-
-    elif not btc_data:
-        st.html(
-            '<div style="color:#00ff4140;font-size:0.8rem;padding:40px 0;text-align:center">'
-            '// BTC BOT NOT ACTIVE — NO DATA YET<br>'
-            '<span style="font-size:0.65rem">Start: python -m btc.main_btc</span></div>'
-        )
-
-    if btc_data:
-        btc_bankroll = btc_data.get("current_bankroll", 0)
-        btc_starting = btc_data.get("starting_bankroll", 0)
-        btc_peak = btc_data.get("peak_bankroll", 0)
-        btc_day_start = btc_data.get("day_start_bankroll", 0)
-        btc_open = btc_data.get("open_positions", {})
-        btc_history = btc_data.get("trade_history", [])
-        btc_bankroll_hist = btc_data.get("bankroll_history", [])
-
-        btc_open_cost = sum(p.get("cost_basis", 0) for p in btc_open.values())
-        btc_realized = btc_bankroll + btc_open_cost
-        btc_total_pnl = btc_realized - btc_starting
-        btc_roi = (btc_realized - btc_starting) / btc_starting * 100 if btc_starting > 0 else 0.0
-        btc_daily_pnl = btc_realized - btc_day_start if btc_day_start > 0 else 0.0
-        btc_total_trades = len(btc_history) + len(btc_open)
-        btc_wins = sum(1 for t in btc_history if (t.get("pnl") or 0) > 0)
-        btc_win_rate = (btc_wins / len(btc_history) * 100) if btc_history else 0.0
-
-        # --- Hero Cards ---
-        st.html('<div class="section-hdr">// PERFORMANCE</div>')
-
-        b1, b2, b3, b4 = st.columns(4)
-
-        with b1:
-            st.html(neon_stat_card(
-                "BTC EQUITY",
-                f"${btc_realized:,.2f}",
-                f"{fmt_usd(btc_total_pnl)} ({btc_roi:+.1f}% ROI)",
-                pnl_color(btc_total_pnl),
-            ))
-
-        with b2:
-            st.html(neon_stat_card(
-                "TODAY P&L",
-                fmt_usd(btc_daily_pnl),
-                f"from ${btc_day_start:,.2f}",
-                pnl_color(btc_daily_pnl),
-            ))
-
-        with b3:
-            st.html(neon_stat_card(
-                "WIN RATE",
-                f"{btc_win_rate:.1f}%",
-                f"{btc_total_trades} trades ({btc_wins}W/{len(btc_history) - btc_wins}L)",
-                "c-amber" if btc_win_rate >= 50 else "c-red",
-            ))
-
-        with b4:
-            st.html(neon_stat_card(
-                "OPEN",
-                f"{len(btc_open)}",
-                f"${btc_open_cost:,.2f} exposed",
-                "c-white",
-            ))
-
-        st.html('<div class="sep"></div>')
-
-        # --- Equity Curve ---
-        if btc_bankroll_hist:
-            st.html('<div class="section-hdr">// BTC EQUITY CURVE</div>')
-            btc_eq = pd.DataFrame(btc_bankroll_hist)
-            btc_eq["timestamp"] = pd.to_datetime(btc_eq["timestamp"])
-            btc_eq = btc_eq.sort_values("timestamp")
-
-            fig_btc = go.Figure()
-            fig_btc.add_trace(go.Scatter(
-                x=btc_eq["timestamp"],
-                y=btc_eq["bankroll"],
+            _fig = go.Figure()
+            _fig.add_trace(go.Scatter(
+                x=_eq["timestamp"], y=_eq["bankroll"],
                 mode="lines",
-                line=dict(color="#f7931a", width=2),
+                line=dict(color="#00ff41", width=2),
                 fill="tozeroy",
-                fillcolor="rgba(247,147,26,0.08)",
-                hovertemplate="$%{y:,.2f}<br>%{x|%b %d %H:%M}<extra></extra>",
+                fillcolor="rgba(0,255,65,0.06)",
+                hovertemplate="$%{y:,.2f}<extra></extra>",
             ))
-
-            if btc_history:
-                for trade in btc_history[-30:]:
-                    closed_at = trade.get("closed_at", "")
-                    pnl_val = trade.get("pnl", 0) or 0
-                    if not closed_at:
+            if _history:
+                for t in _history[-30:]:
+                    ca = t.get("closed_at", "")
+                    pv = t.get("pnl", 0) or 0
+                    if not ca:
                         continue
                     try:
-                        trade_time = pd.to_datetime(closed_at)
+                        tt = pd.to_datetime(ca)
                     except Exception:
                         continue
-                    idx = btc_eq["timestamp"].searchsorted(trade_time)
-                    if idx >= len(btc_eq):
-                        idx = len(btc_eq) - 1
-                    bankroll_at = btc_eq.iloc[idx]["bankroll"]
-                    marker_color = "#00ff41" if pnl_val >= 0 else "#ff0044"
-                    fig_btc.add_trace(go.Scatter(
-                        x=[trade_time],
-                        y=[bankroll_at],
-                        mode="markers",
-                        marker=dict(color=marker_color, size=7, symbol="diamond",
-                                    line=dict(width=1, color=marker_color)),
-                        hovertemplate=f"P&L: {fmt_usd(pnl_val)}<extra></extra>",
+                    ix = _eq["timestamp"].searchsorted(tt)
+                    if ix >= len(_eq):
+                        ix = len(_eq) - 1
+                    bk = _eq.iloc[ix]["bankroll"]
+                    mc = "#00ff41" if pv >= 0 else "#ff0044"
+                    _fig.add_trace(go.Scatter(
+                        x=[tt], y=[bk], mode="markers",
+                        marker=dict(color=mc, size=7, symbol="diamond"),
+                        hovertemplate=f"P&L: {fmt_usd(pv)}<extra></extra>",
                         showlegend=False,
                     ))
-
-            fig_btc.update_layout(
-                **plotly_theme(),
-                height=300,
-                showlegend=False,
-                yaxis_tickprefix="$",
-            )
-            st.plotly_chart(fig_btc, width="stretch", config={"displayModeBar": False})
-
-        st.html('<div class="sep"></div>')
-
-        # --- Open Positions ---
-        if btc_open:
-            st.html('<div class="section-hdr">// OPEN POSITIONS</div>')
-            rows = ""
-            for pid, pos in btc_open.items():
-                side = pos.get("side", "?")
-                q = html_esc(pos.get("question", "?")[:50])
-                entry = pos.get("entry_price", 0)
-                shares = pos.get("size", 0)
-                cost = pos.get("cost_basis", 0)
-                max_pnl = shares - cost
-                end_dt = pos.get("end_date", "")
-                time_left = fmt_end_window(end_dt) if end_dt else "—"
-                side_badge = (
-                    '<span style="color:#00ff41;font-weight:bold">UP</span>'
-                    if "yes" in side.lower() or "up" in side.lower()
-                    else '<span style="color:#ff0044;font-weight:bold">DOWN</span>'
-                )
-                rows += (
-                    f'<tr>'
-                    f'<td style="color:#ccc">{q}</td>'
-                    f'<td>{side_badge}</td>'
-                    f'<td>${entry:.2f}</td>'
-                    f'<td>{shares:.1f}</td>'
-                    f'<td>${cost:.2f}</td>'
-                    f'<td class="{pnl_color(max_pnl)}">{fmt_usd(max_pnl)}</td>'
-                    f'<td style="color:#00ff4160">{time_left}</td>'
-                    f'</tr>'
-                )
-
-            st.html(
-                '<div class="data-table-wrap"><table class="data-table">'
-                '<tr><th>MARKET</th><th>SIDE</th><th>ENTRY</th><th>SHARES</th>'
-                '<th>COST</th><th>MAX P&L</th><th>ENDS</th></tr>'
-                + rows + '</table></div>'
-            )
+            _fig.update_layout(**plotly_theme(), height=320, showlegend=False, yaxis_tickprefix="$")
+            st.plotly_chart(_fig, width="stretch", config={"displayModeBar": False})
         else:
-            st.html(
-                '<div style="color:#00ff4140;font-size:0.7rem;padding:15px 0;text-align:center">'
-                '// NO OPEN BTC POSITIONS</div>'
-            )
+            st.html('<div style="height:320px;display:flex;align-items:center;justify-content:center;color:#00ff4120">// NO EQUITY DATA</div>')
 
-        # --- Trade History ---
-        if btc_history:
-            st.html('<div class="section-hdr">// TRADE HISTORY</div>')
-            rows = ""
-            for trade in reversed(btc_history[-50:]):
-                pnl_val = trade.get("pnl", 0) or 0
-                exit_p = trade.get("exit_price")
-                if exit_p is not None and 0.01 < exit_p < 0.99:
-                    badge = f'<span class="badge badge-amber">@{exit_p:.2f}</span>'
-                elif pnl_val > 0:
-                    badge = '<span class="badge badge-green">WIN</span>'
+        # Bottom stats row
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            st.html(neon_stat_card("EQUITY", f"${_realized:,.2f}", f"peak ${_peak:,.2f}", pnl_color(_total_pnl)))
+        with s2:
+            st.html(neon_stat_card("TODAY", fmt_usd(_daily_pnl), f"from ${_day_start:,.2f}", pnl_color(_daily_pnl)))
+        with s3:
+            st.html(neon_stat_card("OPEN", str(len(_open_pos)), f"${_open_cost:,.2f} exposed", "c-white"))
+        with s4:
+            _losses = len(_history) - _wins
+            st.html(neon_stat_card("W / L", f"{_wins} / {_losses}", f"{_wr:.0f}% win rate", "c-amber" if _wr >= 50 else "c-red"))
+
+    # ════════════════════════════════════════════════
+    # RIGHT COLUMN: Live data + trades
+    # ════════════════════════════════════════════════
+    with col_right:
+        # BTC Price + State
+        _btc_str = f"${_sig_btc:,.2f}" if _sig_btc else "—"
+        _timer_m = int(_remaining // 60)
+        _timer_s = int(_remaining % 60)
+        _timer = f"{_timer_m}:{_timer_s:02d}" if _remaining > 0 else "—"
+        _state_colors = {
+            "IDLE": "#666", "WAITING": "#ffaa00", "COLLECTING": "#ffaa00",
+            "ANALYZING": "#00ff41", "TRADING": "#00ff41", "RESOLVING": "#ffaa00",
+        }
+        _sc = _state_colors.get(_sig_state, "#ff0044")
+
+        st.html(f'''
+        <div style="border:1px solid #00ff4120;border-radius:4px;padding:12px;margin-bottom:8px;background:#00ff4108">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="color:#f7931a;font-size:1.6rem;font-weight:bold;text-shadow:0 0 15px rgba(247,147,26,0.3)">{_btc_str}</div>
+              <div style="font-size:0.65rem;color:#00ff4160;margin-top:2px">BTC/USD REALTIME</div>
+            </div>
+            <div style="text-align:right">
+              <div style="color:{_sc};font-size:0.7rem;font-weight:bold;text-shadow:0 0 8px {_sc}40">{_sig_state}</div>
+              <div style="font-size:0.65rem;color:#00ff4160">{_timer} remain</div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:0.7rem">
+            <span style="color:#00ff41">UP {_up_p:.2f}</span>
+            <span style="color:#ff0044">DOWN {_down_p:.2f}</span>
+            <span style="color:#00ff4140">MKT {_sig_mid}</span>
+          </div>
+        </div>''')
+
+        # AI Signal box
+        _side = _sig_data.get("side", "")
+        _conf = _sig_data.get("confidence", 0)
+        if _side:
+            _side_c = "#00ff41" if _side == "UP" else "#ff0044"
+            st.html(f'''
+            <div style="border:1px solid {_side_c}30;border-radius:4px;padding:10px;margin-bottom:8px;background:{_side_c}08;text-align:center">
+              <div style="color:{_side_c};font-size:1.8rem;font-weight:bold;text-shadow:0 0 20px {_side_c}40">{_side}</div>
+              <div style="color:#00ff4160;font-size:0.65rem">AI SIGNAL · conf {_conf:.0%}</div>
+            </div>''')
+        elif _sig_state == "COLLECTING":
+            st.html('''
+            <div style="border:1px solid #ffaa0030;border-radius:4px;padding:10px;margin-bottom:8px;background:#ffaa0008;text-align:center">
+              <div style="color:#ffaa00;font-size:1rem">COLLECTING DATA...</div>
+              <div style="color:#00ff4140;font-size:0.65rem">60s price analysis window</div>
+            </div>''')
+
+        # Trade History (compact)
+        if _history:
+            st.html('<div style="color:#00ff4140;font-size:0.6rem;letter-spacing:2px;padding:4px 0">RECENT TRADES</div>')
+            _rows = ""
+            for t in reversed(_history[-15:]):
+                _pv = t.get("pnl", 0) or 0
+                _ep = t.get("exit_price")
+                _slug = t.get("slug", "")
+                _tmid = _slug.split("-")[-1] if _slug else ""
+                _strat = t.get("confidence_source", "")[:12]
+                if _pv > 0:
+                    _badge = '<span style="color:#00ff41;font-weight:bold">W</span>'
                 else:
-                    badge = '<span class="badge badge-red">LOSS</span>'
-
-                # Extract market ID from slug
-                slug = trade.get("slug", "")
-                mid = slug.split("-")[-1] if slug else ""
-
-                q = html_esc(trade.get("question", "?")[:35])
-                entry = trade.get("entry_price", 0)
-                exit_v = exit_p if exit_p is not None else 0
-                strategy = trade.get("confidence_source", "")
-                closed = trade.get("closed_at", "")
-                try:
-                    closed_fmt = parse_iso(closed).strftime("%m/%d %H:%M") if closed else "—"
-                except Exception:
-                    closed_fmt = "—"
-
-                rows += (
-                    f'<tr>'
-                    f'<td>{badge}</td>'
-                    f'<td style="color:#f7931a;font-size:0.65rem">{mid}</td>'
-                    f'<td style="color:#ccc">{q}</td>'
-                    f'<td>${entry:.2f}</td>'
-                    f'<td>${exit_v:.2f}</td>'
-                    f'<td class="{pnl_color(pnl_val)}">{fmt_usd(pnl_val)}</td>'
-                    f'<td style="color:#00ff4160;font-size:0.65rem">{strategy}</td>'
-                    f'<td style="color:#00ff4160">{closed_fmt}</td>'
+                    _badge = '<span style="color:#ff0044;font-weight:bold">L</span>'
+                _pc = "c-green" if _pv >= 0 else "c-red"
+                _rows += (
+                    f'<tr style="font-size:0.65rem">'
+                    f'<td>{_badge}</td>'
+                    f'<td style="color:#f7931a">{_tmid}</td>'
+                    f'<td class="{_pc}">{fmt_usd(_pv)}</td>'
+                    f'<td style="color:#00ff4140">{_strat}</td>'
                     f'</tr>'
                 )
-
             st.html(
                 '<div class="data-table-wrap"><table class="data-table">'
-                '<tr><th></th><th>ID</th><th>MARKET</th><th>ENTRY</th><th>EXIT</th>'
-                '<th>P&L</th><th>STRATEGY</th><th>CLOSED</th></tr>'
-                + rows + '</table></div>'
+                '<tr><th></th><th>ID</th><th>P&L</th><th>STRATEGY</th></tr>'
+                + _rows + '</table></div>'
             )
 
-        # --- P&L Distribution ---
-        if btc_history:
-            st.html('<div class="section-hdr">// P&L DISTRIBUTION</div>')
-            pnls = [t.get("pnl", 0) or 0 for t in btc_history]
-            fig_pnl = go.Figure()
-            colors = ["#00ff41" if p >= 0 else "#ff0044" for p in pnls]
-            fig_pnl.add_trace(go.Bar(
-                x=list(range(1, len(pnls) + 1)),
-                y=pnls,
-                marker_color=colors,
-                hovertemplate="Trade %{x}<br>P&L: $%{y:,.2f}<extra></extra>",
+        # P&L bars (compact)
+        if _history:
+            _pnls = [t.get("pnl", 0) or 0 for t in _history[-30:]]
+            _pfig = go.Figure()
+            _colors = ["#00ff41" if p >= 0 else "#ff0044" for p in _pnls]
+            _pfig.add_trace(go.Bar(
+                x=list(range(1, len(_pnls) + 1)), y=_pnls,
+                marker_color=_colors,
+                hovertemplate="$%{y:,.2f}<extra></extra>",
             ))
-            fig_pnl.update_layout(
-                **plotly_theme(),
-                height=180,
-                showlegend=False,
-                yaxis_tickprefix="$",
-                xaxis_title="Trade #",
-            )
-            st.plotly_chart(fig_pnl, width="stretch", config={"displayModeBar": False})
+            _pfig.update_layout(**plotly_theme(), height=120, showlegend=False, yaxis_tickprefix="$", margin=dict(l=30, r=10, t=5, b=20))
+            st.plotly_chart(_pfig, width="stretch", config={"displayModeBar": False})
+
+    # Remove old btc_data block below since we handled it above
+    # (all BTC rendering handled in the 2-column layout above)
 
 # ---------------------------------------------------------------------------
 # Footer
