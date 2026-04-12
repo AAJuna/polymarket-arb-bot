@@ -31,7 +31,8 @@ logger = get_logger(__name__)
 class State(Enum):
     IDLE = auto()
     WAITING = auto()
-    OBSERVING = auto()
+    COLLECTING = auto()  # first 60s: gather price data
+    ANALYZING = auto()   # AI analyzes, waits for entry time
     TRADING = auto()
     RESOLVING = auto()
 
@@ -60,28 +61,51 @@ class BtcOpportunity:
     raw_data: dict = field(default_factory=dict)
 
 
-def _build_opportunity(signal: BtcSignal, market: BtcMarket) -> BtcOpportunity:
-    """Convert a BtcSignal + BtcMarket into an executor-compatible opportunity."""
-    if signal.side == "UP":
+def _market_url(market: BtcMarket) -> str:
+    """Build Polymarket URL from market's window start timestamp."""
+    ts = int(market.window_start.timestamp())
+    return f"https://polymarket.com/event/btc-updown-5m-{ts}"
+
+
+def _market_id_slug(market: BtcMarket) -> str:
+    """Extract the unix timestamp ID from market window."""
+    return str(int(market.window_start.timestamp()))
+
+
+def _build_opportunity(
+    side: str,
+    confidence: float,
+    market: BtcMarket,
+    strategy: str = "",
+) -> BtcOpportunity:
+    """Build an executor-compatible opportunity from AI decision."""
+    if side == "UP":
         token_id = market.up_token_id
-        side = "YES"   # Up = outcome[0] → YES → outcome_prices[0]
+        opp_side = "YES"   # Up = outcome[0] → YES → outcome_prices[0]
+        price = market.up_price
     else:
         token_id = market.down_token_id
-        side = "NO"    # Down = outcome[1] → NO → outcome_prices[1]
+        opp_side = "NO"    # Down = outcome[1] → NO → outcome_prices[1]
+        price = market.down_price
+
+    url = _market_url(market)
+    mid = _market_id_slug(market)
 
     return BtcOpportunity(
         type="btc_5min",
         market_id=market.market_id,
         condition_id=market.condition_id,
         token_id=token_id,
-        side=side,
-        price=signal.market_price,
-        edge_pct=signal.edge_pct,
-        confidence_source="btc_signal",
+        side=opp_side,
+        price=price,
+        edge_pct=0.0,
+        confidence_source=strategy or "ai_haiku",
         yes_price=market.up_price,
         no_price=market.down_price,
         question=market.question,
         end_date=market.window_end,
+        slug=f"btc-updown-5m-{mid}",
+        market_url=url,
         raw_data={
             "order_price_min_tick_size": market.tick_size,
             "neg_risk": market.neg_risk,
@@ -172,6 +196,13 @@ def run() -> None:
     scanner = BtcScanner()
     engine = SignalEngine(rtds)
 
+    from btc.ai_analyzer import BtcAIAnalyzer
+    ai = BtcAIAnalyzer()
+    if ai.enabled:
+        logger.info(f"AI analyzer ready (model={cfg.AI_MODEL})")
+    else:
+        logger.warning("AI analyzer disabled — no ANTHROPIC_API_KEY")
+
     # Import shared infrastructure
     # Patch portfolio data dir for isolation BEFORE importing
     import portfolio as portfolio_module
@@ -228,9 +259,10 @@ def run() -> None:
     state = State.IDLE
     current_market: Optional[BtcMarket] = None
     current_position_id: Optional[str] = None
+    ai_decision: Optional[object] = None  # BtcAIAnalysis
+    skipped_condition_ids: set[str] = set()  # don't re-enter skipped windows
     cycle = 0
     last_status_log = 0.0
-
     last_resolution_check = 0.0
 
     while running:
@@ -238,7 +270,7 @@ def run() -> None:
         cycle_start = time.monotonic()
 
         try:
-            # Check resolutions every 15s (not every cycle — HTTP call is slow)
+            # Check resolutions every 15s
             if port.state.open_positions and (cycle_start - last_resolution_check) > 15:
                 port.check_resolutions()
                 last_resolution_check = cycle_start
@@ -248,13 +280,19 @@ def run() -> None:
             # ============================================================
             if state == State.IDLE:
                 market = scanner.get_tradeable_window()
+                if market and market.condition_id in skipped_condition_ids:
+                    market = scanner.get_next_window()
+                if market and market.condition_id in skipped_condition_ids:
+                    market = None
                 if market:
-                    current_market = market
+                    ai_decision = None
+                    url = _market_url(market)
                     state = State.WAITING
                     logger.info(
-                        f"Found market: {market.question[:60]}  "
+                        f"Found: {market.question[:50]}  "
                         f"start={market.window_start.strftime('%H:%M:%S')}  "
-                        f"end={market.window_end.strftime('%H:%M:%S')}"
+                        f"end={market.window_end.strftime('%H:%M:%S')}  "
+                        f"{url}"
                     )
                 _write_signal_status(state, rtds, engine, current_market)
                 _sleep(cfg.POLL_INTERVAL_IDLE, running)
@@ -265,76 +303,139 @@ def run() -> None:
             elif state == State.WAITING:
                 now = datetime.now(timezone.utc)
                 if now >= current_market.window_start:
-                    # Capture approximate strike (best effort — model uses
-                    # market prices as baseline, not this value)
                     strike = rtds.get_btc_price() or 0.0
                     duration = (
                         current_market.window_end - current_market.window_start
                     ).total_seconds()
                     engine.set_window(strike, current_market.window_start, duration)
-                    state = State.OBSERVING
+                    state = State.COLLECTING
                     logger.info(
                         f"Window OPEN: BTC=${strike:,.2f}  "
                         f"Up={current_market.up_price:.2f}  "
-                        f"Down={current_market.down_price:.2f}"
+                        f"Down={current_market.down_price:.2f}  "
+                        f"| Collecting {cfg.AI_COLLECT_SEC:.0f}s of data..."
                     )
                 _sleep(0.5, running)
 
             # ============================================================
-            # OBSERVING: Compute signal, enter if edge found
+            # COLLECTING: Gather price data for AI analysis (first 60s)
             # ============================================================
-            elif state == State.OBSERVING:
+            elif state == State.COLLECTING:
                 now = datetime.now(timezone.utc)
+                elapsed = (now - current_market.window_start).total_seconds()
+
+                _write_signal_status(state, rtds, engine, current_market)
+
+                if elapsed >= cfg.AI_COLLECT_SEC:
+                    # Send data to Haiku
+                    btc_price = rtds.get_btc_price() or 0.0
+                    price_history = rtds.get_price_history(seconds=int(cfg.AI_COLLECT_SEC))
+                    url = _market_url(current_market)
+
+                    logger.info(
+                        f"Sending {len(price_history)} ticks to AI for analysis..."
+                    )
+
+                    if ai.enabled:
+                        ai_decision = ai.analyze(
+                            price_history=price_history,
+                            up_price=current_market.up_price,
+                            down_price=current_market.down_price,
+                            btc_price=btc_price,
+                            time_remaining_sec=(current_market.window_end - now).total_seconds(),
+                            market_question=current_market.question,
+                            market_url=url,
+                        )
+                    else:
+                        # Fallback to momentum signal engine
+                        sig = engine.get_signal(current_market.up_price, current_market.down_price)
+                        if sig and sig.confidence >= cfg.MIN_CONFIDENCE:
+                            from btc.ai_analyzer import BtcAIAnalysis
+                            ai_decision = BtcAIAnalysis(
+                                side=sig.side,
+                                confidence=sig.confidence,
+                                strategy="momentum_fallback",
+                                reasoning=f"Momentum signal {sig.side} edge={sig.edge_pct:.1f}%",
+                            )
+
+                    if ai_decision and ai_decision.is_valid:
+                        logger.info(
+                            f"AI decision: {ai_decision.side}  "
+                            f"conf={ai_decision.confidence:.0%}  "
+                            f"strategy={ai_decision.strategy}  "
+                            f"| Waiting for entry at t={cfg.AI_ENTRY_AT_SEC:.0f}s"
+                        )
+                        state = State.ANALYZING
+                    else:
+                        reason = ai_decision.reasoning if ai_decision else "no analysis"
+                        logger.info(f"AI says SKIP: {reason}")
+                        skipped_condition_ids.add(current_market.condition_id)
+                        engine.reset()
+                        current_market = None
+                        ai_decision = None
+                        scanner.invalidate_cache()
+                        state = State.IDLE
+
+                _sleep(cfg.POLL_INTERVAL_ACTIVE, running)
+
+            # ============================================================
+            # ANALYZING: AI decided, wait for entry time (minute 3)
+            # ============================================================
+            elif state == State.ANALYZING:
+                now = datetime.now(timezone.utc)
+                elapsed = (now - current_market.window_start).total_seconds()
                 time_remaining = (current_market.window_end - now).total_seconds()
 
-                # Check if we've passed the entry deadline or window ended
+                _write_signal_status(state, rtds, engine, current_market)
+
                 if time_remaining <= cfg.EXIT_BEFORE_END_SEC:
-                    logger.info("Entry deadline passed -- skipping to next window")
+                    logger.info("Window ending — too late to enter")
                     engine.reset()
                     current_market = None
+                    ai_decision = None
                     scanner.invalidate_cache()
                     state = State.IDLE
                     continue
 
-                sig = engine.get_signal(
-                    current_market.up_price, current_market.down_price
-                )
-                _write_signal_status(state, rtds, engine, current_market, sig)
+                # Execute at entry time (minute 3 = 180s)
+                if elapsed >= cfg.AI_ENTRY_AT_SEC:
+                    opp = _build_opportunity(
+                        side=ai_decision.side,
+                        confidence=ai_decision.confidence,
+                        market=current_market,
+                        strategy=ai_decision.strategy,
+                    )
 
-                if sig and sig.edge_pct >= cfg.MIN_EDGE_PCT and sig.confidence >= cfg.MIN_CONFIDENCE:
-                    # Risk check
-                    opp = _build_opportunity(sig, current_market)
                     size_dollars = risk_mgr.get_position_size(
                         adjusted_bet_pct=cfg.BET_SIZE_PCT,
-                        edge_pct=sig.edge_pct,
-                        price=sig.market_price,
-                        ai_confidence=sig.confidence,
+                        edge_pct=0.0,
+                        price=opp.price,
+                        ai_confidence=ai_decision.confidence,
                     )
                     size_dollars = min(size_dollars, cfg.MAX_POSITION_SIZE)
                     can_trade, block_reason = risk_mgr.can_trade(opp, size_dollars)
 
                     if can_trade:
-
                         result = executor.place_order(opp, size_dollars)
                         if result:
-                            pos = port.record_trade(opp, result)
+                            pos = port.record_trade(opp, result, ai_decision)
                             current_position_id = pos.position_id
+                            url = _market_url(current_market)
+                            mid = _market_id_slug(current_market)
                             state = State.TRADING
                             logger.info(
-                                f"TRADE: {sig.side} @ {sig.market_price:.2f}  "
-                                f"edge={sig.edge_pct:.1f}%  "
-                                f"conf={sig.confidence:.2f}  "
-                                f"BTC=${sig.btc_price:,.2f} vs strike=${sig.strike_price:,.2f}"
+                                f"ENTRY: {ai_decision.side} @ {opp.price:.2f}  "
+                                f"conf={ai_decision.confidence:.0%}  "
+                                f"strategy={ai_decision.strategy}  "
+                                f"| ID={mid}  {url}"
                             )
                     else:
-                        logger.debug(f"Risk blocked: {block_reason}")
-                elif sig:
-                    if cycle % 30 == 0:  # log every ~30 seconds
-                        logger.debug(
-                            f"Signal: {sig.side}  edge={sig.edge_pct:.1f}%  "
-                            f"conf={sig.confidence:.2f}  "
-                            f"BTC=${sig.btc_price:,.2f}"
-                        )
+                        logger.info(f"Risk blocked: {block_reason}")
+                        engine.reset()
+                        current_market = None
+                        ai_decision = None
+                        scanner.invalidate_cache()
+                        state = State.IDLE
 
                 _sleep(cfg.POLL_INTERVAL_ACTIVE, running)
 
@@ -347,12 +448,12 @@ def run() -> None:
 
                 btc_price = rtds.get_btc_price()
                 if btc_price and engine.is_ready:
-                    strike = engine._strike_price
+                    strike = engine._strike_price or 0
                     direction = "UP" if btc_price >= strike else "DOWN"
                     if cycle % 10 == 0:
                         logger.info(
                             f"Position open | BTC=${btc_price:,.2f}  "
-                            f"strike=${strike:,.2f}  direction={direction}  "
+                            f"direction={direction}  "
                             f"remaining={time_remaining:.0f}s"
                         )
 
@@ -360,7 +461,7 @@ def run() -> None:
 
                 if time_remaining <= 0:
                     state = State.RESOLVING
-                    logger.info("Window ended -- waiting for resolution")
+                    logger.info("Window ended — waiting for resolution")
 
                 _sleep(cfg.POLL_INTERVAL_ACTIVE, running)
 
@@ -368,33 +469,33 @@ def run() -> None:
             # RESOLVING: Wait for market resolution
             # ============================================================
             elif state == State.RESOLVING:
-                # Global check already ran above; see if position closed
                 has_open = current_position_id in port.state.open_positions
                 if not has_open or current_position_id is None:
                     port.log_status()
                     engine.reset()
                     current_market = None
                     current_position_id = None
+                    ai_decision = None
                     scanner.invalidate_cache()
                     state = State.IDLE
-                    logger.info("Resolution complete -- moving to next window")
+                    logger.info("Resolution complete — next window")
                 else:
-                    # Don't block forever — if window ended >90s ago, move on
-                    # The global check_resolutions will resolve it later
                     if current_market:
-                        now = datetime.now(timezone.utc)
-                        overdue = (now - current_market.window_end).total_seconds()
+                        overdue = (datetime.now(timezone.utc) - current_market.window_end).total_seconds()
                         if overdue > 90:
-                            logger.info(
-                                f"Resolution pending {overdue:.0f}s — moving to next window"
-                            )
+                            logger.info(f"Resolution pending {overdue:.0f}s — moving on")
                             engine.reset()
                             current_market = None
                             current_position_id = None
+                            ai_decision = None
                             scanner.invalidate_cache()
                             state = State.IDLE
                             continue
                     _sleep(cfg.POLL_INTERVAL_IDLE, running)
+
+            # Trim skipped set (keep only recent)
+            if len(skipped_condition_ids) > 20:
+                skipped_condition_ids = set(list(skipped_condition_ids)[-10:])
 
             # Periodic status log
             if time.monotonic() - last_status_log > 60:

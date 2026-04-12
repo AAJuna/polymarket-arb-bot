@@ -15,6 +15,14 @@ ENABLED: bool = os.getenv("BTC_ENABLED", "false").lower() == "true"
 PAPER_TRADING: bool = os.getenv("BTC_PAPER_TRADING", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
+# AI (Claude Haiku)
+# ---------------------------------------------------------------------------
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+AI_MODEL: str = os.getenv("BTC_AI_MODEL", "claude-haiku-4-5-20251001")
+AI_COLLECT_SEC: float = float(os.getenv("BTC_AI_COLLECT_SEC", "60"))  # data collection window
+AI_ENTRY_AT_SEC: float = float(os.getenv("BTC_AI_ENTRY_AT_SEC", "180"))  # execute at minute 3
+
+# ---------------------------------------------------------------------------
 # Polymarket (shared with sports bot)
 # ---------------------------------------------------------------------------
 PRIVATE_KEY: str = os.getenv("POLYMARKET_PRIVATE_KEY", "")
