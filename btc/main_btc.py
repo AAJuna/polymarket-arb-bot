@@ -236,6 +236,10 @@ def run() -> None:
         cycle_start = time.monotonic()
 
         try:
+            # Always check resolutions for any open positions, every cycle
+            if port.state.open_positions:
+                port.check_resolutions()
+
             # ============================================================
             # IDLE: Find next market
             # ============================================================
@@ -372,8 +376,7 @@ def run() -> None:
             # RESOLVING: Wait for market resolution
             # ============================================================
             elif state == State.RESOLVING:
-                # Check if market resolved via portfolio resolution check
-                port.check_resolutions()
+                # Global check already ran above; see if position closed
                 has_open = current_position_id in port.state.open_positions
                 if not has_open or current_position_id is None:
                     port.log_status()
@@ -384,6 +387,21 @@ def run() -> None:
                     state = State.IDLE
                     logger.info("Resolution complete -- moving to next window")
                 else:
+                    # Don't block forever — if window ended >90s ago, move on
+                    # The global check_resolutions will resolve it later
+                    if current_market:
+                        now = datetime.now(timezone.utc)
+                        overdue = (now - current_market.window_end).total_seconds()
+                        if overdue > 90:
+                            logger.info(
+                                f"Resolution pending {overdue:.0f}s — moving to next window"
+                            )
+                            engine.reset()
+                            current_market = None
+                            current_position_id = None
+                            scanner.invalidate_cache()
+                            state = State.IDLE
+                            continue
                     _sleep(cfg.POLL_INTERVAL_IDLE, running)
 
             # Periodic status log
