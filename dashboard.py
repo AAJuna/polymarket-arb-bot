@@ -361,17 +361,17 @@ def plotly_theme() -> dict:
     return dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Courier New, monospace", color="#00ff4160", size=10),
+        font=dict(family="Courier New, monospace", color="rgba(0,255,65,0.38)", size=10),
         margin=dict(l=40, r=20, t=30, b=30),
         xaxis=dict(
-            gridcolor="#00ff4110",
-            zerolinecolor="#00ff4120",
-            tickfont=dict(color="#00ff4140", size=9),
+            gridcolor="rgba(0,255,65,0.06)",
+            zerolinecolor="rgba(0,255,65,0.13)",
+            tickfont=dict(color="rgba(0,255,65,0.25)", size=9),
         ),
         yaxis=dict(
-            gridcolor="#00ff4110",
-            zerolinecolor="#00ff4120",
-            tickfont=dict(color="#00ff4140", size=9),
+            gridcolor="rgba(0,255,65,0.06)",
+            zerolinecolor="rgba(0,255,65,0.13)",
+            tickfont=dict(color="rgba(0,255,65,0.25)", size=9),
         ),
     )
 
@@ -841,7 +841,7 @@ with tab_positions:
                 "type": "line",
                 "xref": "paper", "x0": 0, "x1": 1,
                 "yref": "y", "y0": 0, "y1": 0,
-                "line": {"color": "#ffffff25", "width": 1},
+                "line": {"color": "rgba(255,255,255,0.15)", "width": 1},
             }],
             "yaxis": {**layout.get("yaxis", {}), "tickprefix": "$"},
             "xaxis": {**layout.get("xaxis", {}), "showticklabels": False},
@@ -1141,9 +1141,9 @@ with tab_risk:
             mode="gauge+number",
             value=daily_loss,
             number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": dl_bar}},
-            title={"text": "DAILY LOSS", "font": {"size": 11, "family": "Courier New, monospace", "color": "#00ff4180"}},
+            title={"text": "DAILY LOSS", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
             gauge={
-                "axis": {"range": [0, dl_max], "tickfont": {"size": 9, "color": "#00ff4160"}},
+                "axis": {"range": [0, dl_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
                 "bar": {"color": dl_bar},
                 "bgcolor": "rgba(0,255,65,0.06)",
                 "steps": [
@@ -1177,9 +1177,9 @@ with tab_risk:
             mode="gauge+number",
             value=dd,
             number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": dd_bar}},
-            title={"text": "DRAWDOWN FROM PEAK", "font": {"size": 11, "family": "Courier New, monospace", "color": "#00ff4180"}},
+            title={"text": "DRAWDOWN FROM PEAK", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
             gauge={
-                "axis": {"range": [0, dd_max], "tickfont": {"size": 9, "color": "#00ff4160"}},
+                "axis": {"range": [0, dd_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
                 "bar": {"color": dd_bar},
                 "bgcolor": "rgba(0,255,65,0.06)",
                 "steps": [
@@ -1213,9 +1213,9 @@ with tab_risk:
             mode="gauge+number",
             value=float(cons_losses),
             number={"suffix": "", "font": {"size": 28, "family": "Courier New, monospace", "color": cl_bar}},
-            title={"text": "CONSECUTIVE LOSSES", "font": {"size": 11, "family": "Courier New, monospace", "color": "#00ff4180"}},
+            title={"text": "CONSECUTIVE LOSSES", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
             gauge={
-                "axis": {"range": [0, cl_max], "tickfont": {"size": 9, "color": "#00ff4160"}},
+                "axis": {"range": [0, cl_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
                 "bar": {"color": cl_bar},
                 "bgcolor": "rgba(0,255,65,0.06)",
                 "steps": [
