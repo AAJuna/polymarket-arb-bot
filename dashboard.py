@@ -1594,6 +1594,9 @@ with tab_btc:
         }
         _sc = _state_colors.get(_sig_state, "#ff0044")
 
+        # Window end ISO for JS countdown
+        _window_end_iso = _sig_mkt.get("window_end", "")
+
         st.html(f'''
         <div style="border:1px solid #00ff4120;border-radius:4px;padding:12px;margin-bottom:8px;background:#00ff4108">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1603,7 +1606,7 @@ with tab_btc:
             </div>
             <div style="text-align:right">
               <div style="color:{_sc};font-size:0.7rem;font-weight:bold;text-shadow:0 0 8px {_sc}40">{_sig_state}</div>
-              <div style="font-size:0.65rem;color:#00ff4160">{_timer} remain</div>
+              <div id="btc-timer" style="font-size:0.9rem;color:#00ff41;font-weight:bold">{_timer}</div>
             </div>
           </div>
           <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:0.7rem">
@@ -1611,7 +1614,26 @@ with tab_btc:
             <span style="color:#ff0044">DOWN {_down_p:.2f}</span>
             <span style="color:#00ff4140">MKT {_sig_mid}</span>
           </div>
-        </div>''')
+        </div>
+        <script>
+        (function() {{
+          var end = new Date("{_window_end_iso}").getTime();
+          var el = document.getElementById("btc-timer");
+          if (!el || !end) return;
+          function tick() {{
+            var now = Date.now();
+            var diff = Math.max(0, Math.floor((end - now) / 1000));
+            var m = Math.floor(diff / 60);
+            var s = diff % 60;
+            el.textContent = m + ":" + (s < 10 ? "0" : "") + s;
+            if (diff <= 60) el.style.color = "#ffaa00";
+            if (diff <= 10) el.style.color = "#ff0044";
+            if (diff > 0) setTimeout(tick, 1000);
+            else el.textContent = "ENDED";
+          }}
+          tick();
+        }})();
+        </script>''')
 
         # AI Signal box
         _side = _sig_data.get("side", "")
@@ -1629,6 +1651,41 @@ with tab_btc:
               <div style="color:#ffaa00;font-size:1rem">COLLECTING DATA...</div>
               <div style="color:#00ff4140;font-size:0.65rem">60s price analysis window</div>
             </div>''')
+
+        # AI decision reasoning
+        _ai_dec = _bs.get("ai_decision", {})
+        if _ai_dec:
+            _ai_reason = _ai_dec.get("reasoning", "")
+            _ai_strat = _ai_dec.get("strategy", "")
+            st.html(f'''
+            <div style="border:1px solid #00ff4110;border-radius:4px;padding:8px;margin-bottom:8px;background:#00ff4105">
+              <div style="color:#f7931a;font-size:0.6rem;letter-spacing:1px;margin-bottom:4px">AI REASONING · {_ai_strat}</div>
+              <div style="color:#00ff4180;font-size:0.6rem;line-height:1.4">{html_esc(_ai_reason)}</div>
+            </div>''')
+
+        # AI Cost Card
+        _ai_st = _bs.get("ai_stats", {})
+        _ai_calls = _ai_st.get("total_calls", 0)
+        _ai_cost = _ai_st.get("total_cost_usd", 0)
+        _cost_per = _ai_cost / _ai_calls if _ai_calls > 0 else 0
+        st.html(f'''
+        <div style="border:1px solid #00ff4110;border-radius:4px;padding:10px;margin-bottom:8px;background:#00ff4105">
+          <div style="color:#00ff4140;font-size:0.6rem;letter-spacing:2px;margin-bottom:6px">HAIKU API</div>
+          <div style="display:flex;justify-content:space-between">
+            <div style="text-align:center">
+              <div style="color:#f7931a;font-size:1.1rem;font-weight:bold">{_ai_calls}</div>
+              <div style="color:#00ff4140;font-size:0.55rem">CALLS</div>
+            </div>
+            <div style="text-align:center">
+              <div style="color:#00ff41;font-size:1.1rem;font-weight:bold">${_ai_cost:.4f}</div>
+              <div style="color:#00ff4140;font-size:0.55rem">TOTAL COST</div>
+            </div>
+            <div style="text-align:center">
+              <div style="color:#00ff4180;font-size:1.1rem;font-weight:bold">${_cost_per:.4f}</div>
+              <div style="color:#00ff4140;font-size:0.55rem">PER CALL</div>
+            </div>
+          </div>
+        </div>''')
 
         # Trade History (compact)
         if _history:

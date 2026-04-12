@@ -123,6 +123,8 @@ def _write_signal_status(
     market: Optional[BtcMarket] = None,
     sig: Optional[BtcSignal] = None,
     position_id: Optional[str] = None,
+    ai_stats: Optional[dict] = None,
+    ai_decision: Optional[object] = None,
 ) -> None:
     """Write current signal engine state to JSON for dashboard consumption."""
     now = datetime.now(timezone.utc)
@@ -169,6 +171,17 @@ def _write_signal_status(
 
     if position_id:
         status["position_id"] = position_id
+
+    if ai_stats:
+        status["ai_stats"] = ai_stats
+
+    if ai_decision and hasattr(ai_decision, "side"):
+        status["ai_decision"] = {
+            "side": ai_decision.side,
+            "confidence": round(ai_decision.confidence, 3),
+            "strategy": ai_decision.strategy,
+            "reasoning": ai_decision.reasoning[:120],
+        }
 
     try:
         SIGNAL_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +310,7 @@ def run() -> None:
                         f"{market.window_start.strftime('%H:%M:%S')}-"
                         f"{market.window_end.strftime('%H:%M:%S')}"
                     )
-                _write_signal_status(state, rtds, engine, current_market)
+                _write_signal_status(state, rtds, engine, current_market, ai_stats=ai.stats, ai_decision=ai_decision)
                 _sleep(cfg.POLL_INTERVAL_IDLE, running)
 
             # ============================================================
@@ -327,7 +340,7 @@ def run() -> None:
                 now = datetime.now(timezone.utc)
                 elapsed = (now - current_market.window_start).total_seconds()
 
-                _write_signal_status(state, rtds, engine, current_market)
+                _write_signal_status(state, rtds, engine, current_market, ai_stats=ai.stats, ai_decision=ai_decision)
 
                 if elapsed >= cfg.AI_COLLECT_SEC:
                     # Send data to Haiku
@@ -389,7 +402,7 @@ def run() -> None:
                 elapsed = (now - current_market.window_start).total_seconds()
                 time_remaining = (current_market.window_end - now).total_seconds()
 
-                _write_signal_status(state, rtds, engine, current_market)
+                _write_signal_status(state, rtds, engine, current_market, ai_stats=ai.stats, ai_decision=ai_decision)
 
                 if time_remaining <= cfg.EXIT_BEFORE_END_SEC:
                     logger.info("Window ending — too late to enter")
@@ -458,7 +471,7 @@ def run() -> None:
                             f"remaining={time_remaining:.0f}s"
                         )
 
-                _write_signal_status(state, rtds, engine, current_market, position_id=current_position_id)
+                _write_signal_status(state, rtds, engine, current_market, position_id=current_position_id, ai_stats=ai.stats, ai_decision=ai_decision)
 
                 if time_remaining <= 0:
                     state = State.RESOLVING
