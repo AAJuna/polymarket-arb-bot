@@ -77,7 +77,8 @@ ODDS_SPORTS: list = [
     "tennis_atp_french_open",
     "soccer_uefa_champs_league",
 ]
-ODDS_CACHE_TTL: int = 3600  # seconds (1 hour — conserves free tier quota)
+ODDS_CACHE_TTL: int = int(os.getenv("ODDS_CACHE_TTL", "900"))  # seconds (15 min default)
+MIN_BOOKMAKER_COUNT: int = int(os.getenv("MIN_BOOKMAKER_COUNT", "3"))
 SPORTMONKS_API_KEY: str = os.getenv("SPORTMONKS_API_KEY", "")
 SPORTMONKS_API_BASE: str = os.getenv("SPORTMONKS_API_BASE", "https://api.sportmonks.com/v3/football")
 API_FOOTBALL_API_KEY: str = os.getenv("API_FOOTBALL_API_KEY", "")
@@ -115,7 +116,7 @@ ENABLE_SAME_MARKET_EXECUTION: bool = os.getenv("ENABLE_SAME_MARKET_EXECUTION", "
 ENABLE_CROSS_MARKET_ARB: bool = os.getenv("ENABLE_CROSS_MARKET_ARB", "false").lower() == "true"
 ENABLE_ODDS_COMPARISON_ARB: bool = os.getenv("ENABLE_ODDS_COMPARISON_ARB", "true").lower() == "true"
 ODDS_COMPARISON_MONEYLINE_ONLY: bool = os.getenv("ODDS_COMPARISON_MONEYLINE_ONLY", "true").lower() == "true"
-ODDS_COMPARISON_MIN_PRICE: float = float(os.getenv("ODDS_COMPARISON_MIN_PRICE", "0.05"))
+ODDS_COMPARISON_MIN_PRICE: float = float(os.getenv("ODDS_COMPARISON_MIN_PRICE", "0.15"))
 MATCH_ANALYTICS_ENABLED: bool = os.getenv("MATCH_ANALYTICS_ENABLED", "true").lower() == "true"
 MATCH_DATA_PROVIDERS: list[str] = [
     item.strip().lower()
@@ -192,7 +193,7 @@ MIN_LIQUIDITY_DEPTH_USD: float = float(os.getenv("MIN_LIQUIDITY_DEPTH_USD", "500
 # Cross-market: skip group if computed confidence falls below this
 CROSS_MARKET_CONFIDENCE_THRESHOLD: float = float(os.getenv("CROSS_MARKET_CONFIDENCE_THRESHOLD", "0.80"))
 # Odds comparison: skip match if fuzzy-match confidence falls below this
-ODDS_MATCH_MIN_CONFIDENCE: float = float(os.getenv("ODDS_MATCH_MIN_CONFIDENCE", "0.80"))
+ODDS_MATCH_MIN_CONFIDENCE: float = float(os.getenv("ODDS_MATCH_MIN_CONFIDENCE", "0.85"))
 # Target trade size (USD) used for size-aware depth simulation
 TRADE_SIZE_TARGET_USD: float = float(os.getenv("TRADE_SIZE_TARGET_USD", "100.0"))
 

@@ -29,11 +29,18 @@ class RiskManager:
     # Position sizing
     # ------------------------------------------------------------------
 
-    def get_position_size(self, adjusted_bet_pct: float | None = None) -> float:
+    def get_position_size(
+        self,
+        adjusted_bet_pct: float | None = None,
+        edge_pct: float = 0.0,
+        price: float = 0.5,
+        ai_confidence: float = 0.0,
+    ) -> float:
         """Return the dollar size for the next trade.
 
         Returns 0.0 if trading should be fully blocked.
-        adjusted_bet_pct comes from Compounder; falls back to config.BET_SIZE_PCT.
+        Uses quarter-Kelly sizing when edge and confidence are provided,
+        otherwise falls back to flat percentage.
         """
         state = self._portfolio.state
         bankroll = state.current_bankroll
@@ -43,6 +50,26 @@ class RiskManager:
             return 0.0
 
         bet_pct = adjusted_bet_pct if adjusted_bet_pct is not None else config.BET_SIZE_PCT
+
+        # Quarter-Kelly: scale position by edge quality and AI confidence.
+        # kelly_fraction = edge / (1 - price)  →  expected ROI per dollar
+        # We use quarter-Kelly (× 0.25) for safety, then blend with confidence.
+        if edge_pct > 0 and ai_confidence > 0 and price > 0:
+            kelly_f = (edge_pct / 100.0) / max(0.10, 1.0 - price)
+            quarter_kelly_pct = kelly_f * 0.25 * 100.0  # as percentage
+            # Blend: high AI confidence → lean toward Kelly, low → lean toward base
+            confidence_weight = min(1.0, ai_confidence)
+            bet_pct = (
+                confidence_weight * min(quarter_kelly_pct, config.MAX_BET_SIZE / max(1.0, equity) * 100.0)
+                + (1.0 - confidence_weight) * bet_pct
+            )
+            bet_pct = max(bet_pct, config.BET_SIZE_PCT * 0.5)  # never go below half base
+            bet_pct = min(bet_pct, config.BET_SIZE_PCT * 3.0)  # cap at 3x base
+            logger.debug(
+                f"Kelly sizing: edge={edge_pct:.1f}% price={price:.3f} "
+                f"ai_conf={ai_confidence:.2f} → bet_pct={bet_pct:.2f}%"
+            )
+
         size = equity * (bet_pct / 100.0)
 
         # Drawdown reductions
@@ -205,10 +232,15 @@ class RiskManager:
         return max(0.0, (peak - self._equity()) / peak)
 
     def _equity(self) -> float:
-        """Cash plus cost basis of open positions."""
+        """Cash plus conservative estimate of open position value.
+
+        Uses a 50% haircut on cost basis rather than full mark-to-market,
+        since positions (especially longshots) may be worth less than entry cost.
+        This prevents oversizing when positions are underwater.
+        """
         state = self._portfolio.state
         open_cost = sum(p.get("cost_basis", 0) for p in state.open_positions.values())
-        return state.current_bankroll + open_cost
+        return state.current_bankroll + open_cost * 0.5
 
     def _pause_expired(self) -> bool:
         """True if the consecutive-loss pause window has elapsed."""

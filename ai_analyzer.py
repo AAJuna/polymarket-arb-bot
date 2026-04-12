@@ -293,15 +293,34 @@ class AIAnalyzer:
                 f"- Candidate side fair probability: {candidate_true_prob:.1%}\n"
             )
 
+        # Compute ROI-style edge for the prompt
+        roi_edge = opp.edge_pct / max(0.10, 1.0 - opp.price) if opp.price < 1.0 else 0.0
+
+        longshot_warning = ""
+        if candidate_market_price < 0.20:
+            longshot_warning = (
+                "\n⚠ LONGSHOT WARNING: This token is priced below $0.20. At very low prices, "
+                "large nominal edge percentages are common but almost always reflect data "
+                "mismatches, fuzzy-matching errors, or thin-market noise rather than real "
+                "mispricing. Require STRONG independent evidence before recommending BUY. "
+                "Default to SKIP unless you have high conviction from multiple data sources."
+            )
+
+        bookmaker_note = ""
+        if ext and ext.bookmaker_count > 0:
+            bookmaker_note = f"\nBookmaker consensus based on {ext.bookmaker_count} bookmaker(s)."
+            if ext.bookmaker_count < 5:
+                bookmaker_note += " (low count — treat as less reliable)"
+
         return f"""You are a prediction market expert and sports analyst.
 
 Market: {opp.question}
 Current YES price: ${opp.yes_price:.3f} | NO price: ${opp.no_price:.3f}
 {candidate_section}
-Detected edge: {opp.edge_pct:.1f}% ({opp.type})
+Detected edge: {opp.edge_pct:.1f}% ({opp.type}) | Expected ROI if correct: {roi_edge:.1%}
 End date: {opp.end_date.strftime('%Y-%m-%d %H:%M UTC')}
-{odds_section}
-{matchup_section}
+{odds_section}{bookmaker_note}
+{matchup_section}{longshot_warning}
 
 Assess whether the candidate trade has a real edge or is a data artifact. Use the
 structured match model when present, and do not recommend the opposite side unless
@@ -314,6 +333,8 @@ Consider:
 - Is the pricing discrepancy likely to persist until expiry?
 - Are there upcoming events (injuries, news) that could affect the outcome?
 - Is the market liquid enough for meaningful edge?
+- Is the edge likely real, or is it an artifact of fuzzy team-name matching or stale odds?
+- For low-priced tokens (<$0.20): is there strong independent evidence, or is the gap just noise?
 
 For predicted_probability, return the estimated true probability of your recommended
 side being correct, not the market YES probability unless you recommend YES.

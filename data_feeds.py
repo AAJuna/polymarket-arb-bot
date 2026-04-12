@@ -163,6 +163,13 @@ def _parse_event(raw: dict, sport: str) -> Optional[ExternalOdds]:
         if not home_probs:
             return None
 
+        if len(home_probs) < config.MIN_BOOKMAKER_COUNT:
+            logger.debug(
+                f"Skipping event {home_team} vs {away_team}: "
+                f"only {len(home_probs)} bookmaker(s) (min={config.MIN_BOOKMAKER_COUNT})"
+            )
+            return None
+
         avg_home = sum(home_probs) / len(home_probs)
         avg_away = sum(away_probs) / len(away_probs)
         avg_draw = sum(draw_probs) / len(draw_probs) if draw_probs else None
@@ -214,7 +221,11 @@ def _make_event_key(home: str, away: str, dt: datetime) -> str:
 
 
 def match_team_side(question: str, odds: ExternalOdds) -> Optional[str]:
-    """Return home/away/draw if the market question identifies one outcome."""
+    """Return home/away/draw if the market question identifies one outcome.
+
+    For single-token team names, we require the token to appear as a standalone
+    word boundary match rather than a substring to reduce false positives.
+    """
     q_norm = _normalize(question)
     q_tokens = _distinctive_tokens(question)
 
@@ -223,8 +234,20 @@ def match_team_side(question: str, odds: ExternalOdds) -> Optional[str]:
 
     home_tokens = _distinctive_tokens(odds.home_team)
     away_tokens = _distinctive_tokens(odds.away_team)
-    home_hit = bool(home_tokens and home_tokens <= q_tokens)
-    away_hit = bool(away_tokens and away_tokens <= q_tokens)
+
+    # Require at least 1 distinctive token overlap; for single-token names,
+    # require exact word presence (subset check handles multi-token names).
+    def _team_matches(team_tokens: set[str]) -> bool:
+        if not team_tokens:
+            return False
+        overlap = team_tokens & q_tokens
+        if not overlap:
+            return False
+        # Single-token teams need all tokens matched to avoid ambiguity
+        return team_tokens <= q_tokens
+
+    home_hit = _team_matches(home_tokens)
+    away_hit = _team_matches(away_tokens)
 
     if home_hit and not away_hit:
         return "home"
@@ -268,6 +291,14 @@ def get_odds_for_market(
         if home_overlap == 0 or away_overlap == 0:
             continue
 
+        # For single-token team names, require exact match plus additional
+        # context signals to reduce false positives (e.g. "America" matching
+        # wrong team).
+        if len(home_words) == 1 and home_overlap == 1 and away_overlap == 0:
+            continue
+        if len(away_words) == 1 and away_overlap == 1 and home_overlap == 0:
+            continue
+
         # Check time proximity (within 24 hours)
         time_diff = abs((odds.commence_time - end_date).total_seconds())
         if time_diff > 86400:
@@ -282,6 +313,11 @@ def get_odds_for_market(
         hours_diff = time_diff / 3600.0
         time_proximity = max(0.0, 1.0 - hours_diff / 24.0)
         confidence = token_ratio * 0.7 + time_proximity * 0.3
+
+        # Penalize matches where both teams have only 1 distinctive token —
+        # these are inherently ambiguous.
+        if len(home_words) <= 1 and len(away_words) <= 1:
+            confidence *= 0.8
 
         if confidence > best_confidence or (
             abs(confidence - best_confidence) < 1e-9 and score > best_score

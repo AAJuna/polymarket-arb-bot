@@ -235,6 +235,15 @@ class RealtimeMarketFeed:
             return None
         return snapshot.best_ask
 
+    def get_best_bid(self, asset_id: str) -> Optional[float]:
+        snapshot = self._get_snapshot(asset_id)
+        if snapshot is None or snapshot.best_bid is None:
+            return None
+        age = time.monotonic() - snapshot.quote_updated_monotonic
+        if age > config.REALTIME_MARKET_WS_QUOTE_TTL_SECONDS:
+            return None
+        return snapshot.best_bid
+
     def get_orderbook_asks(self, asset_id: str) -> list:
         snapshot = self._get_snapshot(asset_id)
         if snapshot is None or not snapshot.asks:

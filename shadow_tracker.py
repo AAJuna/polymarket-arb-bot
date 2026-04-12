@@ -219,9 +219,40 @@ class ShadowTracker:
         return resolved_count
 
     @staticmethod
+    def _bucket_label(price: float) -> str:
+        if price < 0.15:
+            return "<$0.15"
+        if price < 0.30:
+            return "$0.15-$0.30"
+        if price < 0.50:
+            return "$0.30-$0.50"
+        return "$0.50+"
+
+    @staticmethod
+    def _bucket_summary(signals: list[ShadowSignal]) -> dict:
+        resolved = [s for s in signals if s.pnl_per_dollar is not None]
+        wins = [s for s in resolved if (s.pnl_per_dollar or 0.0) > 0]
+        return {
+            "signals": len(signals),
+            "resolved": len(resolved),
+            "win_rate": len(wins) / len(resolved) * 100 if resolved else 0.0,
+            "avg_pnl": (
+                sum(s.pnl_per_dollar or 0.0 for s in resolved) / len(resolved)
+                if resolved else 0.0
+            ),
+        }
+
+    @staticmethod
     def _strategy_summary(signals: list[ShadowSignal]) -> dict:
         resolved = [signal for signal in signals if signal.pnl_per_dollar is not None]
         wins = [signal for signal in resolved if (signal.pnl_per_dollar or 0.0) > 0]
+
+        # Price bucket breakdown
+        by_bucket: dict[str, list[ShadowSignal]] = defaultdict(list)
+        for signal in signals:
+            bucket = ShadowTracker._bucket_label(signal.entry_price)
+            by_bucket[bucket].append(signal)
+
         return {
             "signals": len(signals),
             "resolved_signals": len(resolved),
@@ -239,6 +270,10 @@ class ShadowTracker:
                 sum(signal.max_edge_pct for signal in signals) / len(signals)
                 if signals else 0.0
             ),
+            "by_price_bucket": {
+                bucket: ShadowTracker._bucket_summary(items)
+                for bucket, items in sorted(by_bucket.items())
+            },
         }
 
     def build_report(self) -> dict:

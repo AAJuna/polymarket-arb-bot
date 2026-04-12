@@ -778,12 +778,25 @@ def _lightweight_analysis(ext: ExternalOdds, yes_side: str) -> MatchupAnalysis:
     else:
         yes_true_prob = draw_prob
 
+    # Lower confidence for non-soccer sports where we have no advanced
+    # team analytics — sportsbook odds alone are a weaker signal.
+    sport = (ext.sport or "").lower()
+    if "soccer" in sport:
+        confidence = 0.38
+        notes = ["advanced team feed unavailable; using sportsbook baseline only"]
+    else:
+        confidence = 0.15
+        notes = [
+            f"no advanced analytics for sport={ext.sport}; "
+            "sportsbook-only baseline with reduced confidence"
+        ]
+
     return MatchupAnalysis(
         provider="sportsbook_only",
         home_team=ext.home_team,
         away_team=ext.away_team,
         yes_side=yes_side,
-        model_confidence=0.38,
+        model_confidence=confidence,
         sportsbook_home_prob=home_prob,
         sportsbook_away_prob=away_prob,
         sportsbook_draw_prob=draw_prob,
@@ -796,7 +809,7 @@ def _lightweight_analysis(ext: ExternalOdds, yes_side: str) -> MatchupAnalysis:
         expected_goals_away=max(0.2, away_prob * 2.2),
         lookback_matches=0,
         head_to_head_matches=0,
-        notes=["advanced team feed unavailable; using sportsbook baseline only"],
+        notes=notes,
     )
 
 

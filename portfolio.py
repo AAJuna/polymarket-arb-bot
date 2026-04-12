@@ -539,6 +539,105 @@ class Portfolio:
     # Resolution checking
     # ------------------------------------------------------------------
 
+    def check_early_exits(self) -> int:
+        """Check open paper positions for profitable early exit opportunities.
+
+        If the current market bid price implies a profit of ≥50% of the original
+        edge, simulate a sell and close the position early. This captures gains
+        without waiting for full market resolution.
+
+        Returns the number of positions exited.
+        """
+        if not config.PAPER_TRADING:
+            return 0
+
+        from realtime_feed import get_shared_feed
+
+        feed = get_shared_feed()
+        exited = 0
+
+        with self._lock:
+            open_ids = list(self.state.open_positions.keys())
+
+        for pid in open_ids:
+            with self._lock:
+                pos_dict = self.state.open_positions.get(pid)
+            if not pos_dict:
+                continue
+
+            token_id = pos_dict.get("token_id", "")
+            entry_price = pos_dict.get("entry_price", 0.0)
+            edge_pct = pos_dict.get("signal_edge_pct", 0.0)
+
+            if not token_id or entry_price <= 0:
+                continue
+
+            # Get current bid price from realtime feed
+            current_bid = feed.get_best_bid(token_id) if feed.enabled else None
+            if current_bid is None:
+                continue
+
+            # Calculate unrealised gain as percentage of entry
+            gain_pct = ((current_bid - entry_price) / entry_price) * 100
+
+            # Exit if we've captured ≥50% of the original signal edge,
+            # or if we're up ≥15% from entry (whichever is lower threshold)
+            min_exit_gain = min(edge_pct * 0.5, 15.0) if edge_pct > 0 else 15.0
+            if gain_pct >= max(min_exit_gain, 5.0):
+                # Simulate selling at current bid
+                self._close_early(pid, current_bid)
+                exited += 1
+
+            # Stop-loss: exit if down ≥50% from entry to cut losses
+            elif gain_pct <= -50.0:
+                self._close_early(pid, current_bid)
+                exited += 1
+
+        return exited
+
+    def _close_early(self, position_id: str, sell_price: float) -> float:
+        """Close a paper position early at the given sell price."""
+        with self._lock:
+            pos_dict = self.state.open_positions.get(position_id)
+            if not pos_dict:
+                return 0.0
+
+            pos = Position(**pos_dict)
+            proceeds = pos.size * sell_price
+            pnl = proceeds - pos.cost_basis
+
+            pos.exit_price = sell_price
+            pos.pnl = pnl
+            pos.closed_at = utcnow().isoformat()
+            pos.status = "early_exit"
+
+            del self.state.open_positions[position_id]
+            self.state.trade_history.append(asdict(pos))
+
+            self.state.current_bankroll += proceeds
+            self.state.total_trades += 1
+
+            if pnl > 0:
+                self.state.winning_trades += 1
+                self.state.consecutive_wins += 1
+                self.state.consecutive_losses = 0
+            else:
+                self.state.consecutive_losses += 1
+                self.state.consecutive_wins = 0
+
+            self._update_peaks()
+
+        action = "PROFIT-TAKE" if pnl > 0 else "STOP-LOSS"
+        logger.log(
+            TRADE_LEVEL,
+            f"TRADE EARLY EXIT ({action}) | {pos.question[:50]} | "
+            f"sell@${sell_price:.3f} | pnl=${pnl:+.2f} | "
+            f"bankroll=${self.state.current_bankroll:.2f}"
+        )
+        self._append_trade_ledger("early_exit", pos)
+        self.save()
+        return pnl
+
     def check_resolutions(self) -> None:
         """Check if any open positions have been resolved on-chain."""
         import scanner as sc

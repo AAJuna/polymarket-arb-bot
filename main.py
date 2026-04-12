@@ -443,7 +443,7 @@ def run() -> None:
                         if o.edge_pct >= min_required_edge
                         and o.market_id not in open_market_ids
                     ],
-                    key=lambda o: o.edge_pct,
+                    key=lambda o: (o.value_score, o.edge_pct),
                     reverse=True,
                 )
 
@@ -525,17 +525,11 @@ def run() -> None:
                             opp=opp,
                         )
                         if not config.ANTHROPIC_API_KEY:
-                            from ai_analyzer import AIAnalysis
-                            analysis = AIAnalysis(
-                                predicted_probability=min(1.0, opp.price + 0.05),
-                                confidence=1.0,
-                                reasoning="AI disabled",
-                                edge_detected=True,
-                                recommended_side=opp.side,
-                                risk_factors=[],
+                            logger.critical(
+                                "ANTHROPIC_API_KEY not set — AI gate disabled, "
+                                "skipping ALL opportunities. Set the key to enable trading."
                             )
-                        else:
-                            continue
+                        continue
 
                     if analysis.supports_candidate(opp.side, opp.price):
                         validated.append((opp, analysis, verified_at))
@@ -645,7 +639,12 @@ def run() -> None:
                 # 5. Execute
                 trades_placed = 0
                 for opp, analysis, verified_at in validated:
-                    size = risk.get_position_size(comp.current_bet_pct)
+                    size = risk.get_position_size(
+                        adjusted_bet_pct=comp.current_bet_pct,
+                        edge_pct=opp.edge_pct,
+                        price=opp.price,
+                        ai_confidence=analysis.confidence,
+                    )
                     allowed, reason = risk.can_trade(opp, size)
 
                     if not allowed:
@@ -702,6 +701,13 @@ def run() -> None:
                 # 6. Check resolved markets
                 port.check_resolutions()
                 shadow.resolve_signals()
+
+            # Always check early exits and resolutions even when trading is
+            # blocked — existing positions should be managed regardless.
+            early_exits = port.check_early_exits()
+            if early_exits:
+                logger.info(f"  → {early_exits} position(s) exited early")
+                comp.update(port.state)
 
             # 7. Periodic bankroll sync (every ~60 seconds)
             bankroll_sync_counter += 1

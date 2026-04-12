@@ -120,6 +120,7 @@ class Opportunity:
     raw_data: MarketData
     external_odds: Optional[ExternalOdds] = None
     paired_token_id: Optional[str] = None   # for same_market: the other side
+    value_score: float = 0.0                # ROI-weighted edge for ranking
     created_at: datetime = field(default_factory=utcnow)
     slug: str = ""
     event_slug: str = ""
@@ -394,6 +395,7 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
             f"gap={gap:.3f} edge={edge_pct:.1f}% confidence={confidence:.2f}"
         )
 
+        cross_v_score = (edge_pct / 100.0) / max(0.10, 1.0 - cheapest.yes_price)
         opps.append(Opportunity(
             type="cross_market",
             market_id=cheapest.market_id,
@@ -408,6 +410,7 @@ def _find_cross_market_opportunities(markets: list[MarketData]) -> list[Opportun
             question=cheapest.question,
             end_date=cheapest.end_date,
             raw_data=cheapest,
+            value_score=cross_v_score,
             slug=cheapest.slug,
             event_slug=cheapest.event_slug,
             market_slug=cheapest.market_slug,
@@ -637,12 +640,17 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             stats["below_edge"] += 1
             continue
 
+        # ROI-weighted score: expected return per dollar risked.
+        # This prevents longshots from dominating the ranking.
+        denominator = max(0.10, 1.0 - chosen_price)
+        v_score = edge_pct / 100.0 / denominator
+
         stats["emitted"] += 1
         logger.debug(
             f"Odds arb: {m.question[:50]} | "
             f"yes={reference_yes_price:.3f}/{sportsbook_prob:.3f} "
             f"no={reference_no_price:.3f}/{no_true_prob:.3f} "
-            f"chosen={chosen_side} edge={edge_pct:.1f}%"
+            f"chosen={chosen_side} edge={edge_pct:.1f}% value={v_score:.3f}"
         )
 
         opps.append(Opportunity(
@@ -660,6 +668,7 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
             end_date=m.end_date,
             raw_data=m,
             external_odds=ext,
+            value_score=v_score,
             slug=m.slug,
             event_slug=m.event_slug,
             market_slug=m.market_slug,
@@ -697,14 +706,15 @@ def find_opportunities(markets: list[MarketData]) -> list[Opportunity]:
 
     all_opps = a_opps + b_opps + c_opps
 
-    # Deduplicate by token_id + side (prefer highest edge)
+    # Deduplicate by token_id + side (prefer highest value score, then edge)
     seen: dict[str, Opportunity] = {}
     for opp in all_opps:
         key = f"{opp.token_id}:{opp.side}"
-        if key not in seen or opp.edge_pct > seen[key].edge_pct:
+        if key not in seen or (opp.value_score, opp.edge_pct) > (seen[key].value_score, seen[key].edge_pct):
             seen[key] = opp
 
-    result = sorted(seen.values(), key=lambda o: o.edge_pct, reverse=True)
+    # Rank by value_score (ROI-weighted) so mid-range opportunities beat longshots
+    result = sorted(seen.values(), key=lambda o: (o.value_score, o.edge_pct), reverse=True)
 
     logger.info(
         f"Arbitrage scan: {len(a_opps)} same-market, "
