@@ -259,13 +259,26 @@ class RtdsFeed:
         logger.info(f"RTDS WebSocket closed (code={close_status_code})")
 
     def _ping_loop(self) -> None:
-        """Send PING every N seconds to keep the connection alive."""
+        """Re-subscribe periodically to get fresh price batches.
+
+        RTDS does not stream continuous updates — it sends a snapshot
+        on subscribe. We re-subscribe every PING_INTERVAL seconds to
+        keep prices fresh.
+        """
         while not self._stop_event.is_set():
             self._stop_event.wait(cfg.RTDS_PING_INTERVAL)
             ws = self._ws
             if ws and self._connected:
                 try:
-                    ws.send("PING")
+                    # Re-subscribe to get a fresh batch
+                    ws.send(json.dumps({
+                        "action": "subscribe",
+                        "subscriptions": [{
+                            "topic": "crypto_prices",
+                            "type": "update",
+                            "filters": json.dumps({"symbol": "btcusdt"}),
+                        }],
+                    }))
                 except Exception:
                     pass
 

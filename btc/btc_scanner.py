@@ -100,40 +100,46 @@ class BtcScanner:
     # ------------------------------------------------------------------
 
     def _fetch_markets(self) -> list[BtcMarket]:
-        """Fetch BTC 5-min markets from Gamma API."""
+        """Fetch BTC 5-min markets from Gamma API.
+
+        Uses slug-based lookup: each 5-min window has slug
+        'btc-updown-5m-{unix_start}' on 300-second boundaries.
+        Query the current, previous, and next few windows directly.
+        """
         markets: list[BtcMarket] = []
+        now_unix = int(datetime.now(timezone.utc).timestamp())
 
-        try:
-            # Search for BTC Up or Down 5-min series via tag_slug
-            url = f"{cfg.GAMMA_API_HOST}/events"
-            params = {
-                "active": "true",
-                "closed": "false",
-                "limit": "50",
-                "order": "startDate",
-                "ascending": "false",
-                "tag_slug": "up-or-down",
-            }
-            resp = _session.get(url, params=params, timeout=15)
-            resp.raise_for_status()
-            events = resp.json()
+        # Round down to nearest 5-minute boundary
+        current_start = now_unix - (now_unix % 300)
 
-            for event in events:
-                title = event.get("title", "")
-                slug = event.get("slug", "")
-                # Only BTC 5-min markets
-                if "bitcoin" not in title.lower():
+        # Check windows: 1 previous, current, and 5 upcoming
+        window_starts = [current_start + (i * 300) for i in range(-1, 6)]
+
+        url = f"{cfg.GAMMA_API_HOST}/events"
+
+        for ws in window_starts:
+            slug = f"btc-updown-5m-{ws}"
+            try:
+                resp = _session.get(
+                    url, params={"slug": slug}, timeout=10
+                )
+                if resp.status_code != 200:
                     continue
-                if "5m" not in slug and "5 minute" not in title.lower():
+                events = resp.json()
+                if not events:
                     continue
 
+                event = events[0] if isinstance(events, list) else events
                 for raw_market in event.get("markets", []):
                     parsed = self._parse_market(raw_market, event)
                     if parsed:
                         markets.append(parsed)
 
-        except requests.RequestException as e:
-            logger.warning(f"BTC scanner fetch failed: {e}")
+            except requests.RequestException:
+                continue
+
+        if not markets:
+            logger.warning("BTC scanner: no markets found via slug lookup")
             return self._cache or []
 
         logger.debug(f"BTC scanner: found {len(markets)} active 5-min markets")
