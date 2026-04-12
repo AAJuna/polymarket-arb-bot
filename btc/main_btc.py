@@ -237,13 +237,16 @@ def run() -> None:
                 if sig and sig.edge_pct >= cfg.MIN_EDGE_PCT and sig.confidence >= cfg.MIN_CONFIDENCE:
                     # Risk check
                     opp = _build_opportunity(sig, current_market)
-                    can_trade, block_reason = risk_mgr.can_trade(port.state, opp)
+                    size_dollars = risk_mgr.get_position_size(
+                        adjusted_bet_pct=cfg.BET_SIZE_PCT,
+                        edge_pct=sig.edge_pct,
+                        price=sig.market_price,
+                        ai_confidence=sig.confidence,
+                    )
+                    size_dollars = min(size_dollars, cfg.MAX_POSITION_SIZE)
+                    can_trade, block_reason = risk_mgr.can_trade(opp, size_dollars)
 
                     if can_trade:
-                        size_dollars = risk_mgr.get_position_size(
-                            port.state, opp, cfg.BET_SIZE_PCT
-                        )
-                        size_dollars = min(size_dollars, cfg.MAX_POSITION_SIZE)
 
                         result = executor.place_order(opp, size_dollars)
                         if result:
@@ -297,9 +300,10 @@ def run() -> None:
             # ============================================================
             elif state == State.RESOLVING:
                 # Check if market resolved via portfolio resolution check
-                resolved_count = port.check_resolutions()
-                if resolved_count > 0 or current_position_id is None:
-                    port.log_portfolio_status()
+                port.check_resolutions()
+                has_open = current_position_id in port.state.open_positions
+                if not has_open or current_position_id is None:
+                    port.log_status()
                     engine.reset()
                     current_market = None
                     current_position_id = None
@@ -311,7 +315,7 @@ def run() -> None:
             # Periodic status log
             if time.monotonic() - last_status_log > 60:
                 rtds.log_status()
-                port.log_portfolio_status()
+                port.log_status()
                 last_status_log = time.monotonic()
 
         except KeyboardInterrupt:
