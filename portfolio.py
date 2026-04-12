@@ -121,6 +121,7 @@ class PortfolioState:
     total_trades: int = 0
     winning_trades: int = 0
     pause_until: Optional[str] = None                    # ISO string or None
+    bankroll_history: list = field(default_factory=list)  # [{timestamp, bankroll}]
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +386,15 @@ class Portfolio:
         try:
             DATA_DIR.mkdir(exist_ok=True)
             with self._lock:
+                # Append bankroll snapshot
+                self.state.bankroll_history.append({
+                    "timestamp": utcnow().isoformat(),
+                    "bankroll": self.state.current_bankroll,
+                })
+                # Trim to rolling window
+                max_entries = config.BANKROLL_HISTORY_MAX_ENTRIES
+                if len(self.state.bankroll_history) > max_entries:
+                    self.state.bankroll_history = self.state.bankroll_history[-max_entries:]
                 data = asdict(self.state)
 
             if PORTFOLIO_FILE.exists():
