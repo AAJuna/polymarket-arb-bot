@@ -245,6 +245,63 @@ st.markdown("""
     padding-top: 12px; border-top: 1px solid #00ff4115;
     letter-spacing: 1px;
   }
+
+  /* ══ Mobile responsive ══ */
+  @media (max-width: 768px) {
+    /* Topbar: stack vertically */
+    .topbar {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+    }
+    .topbar-meta {
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .meta-item { text-align: left; }
+
+    /* Stat cards: bigger text */
+    .stat-value { font-size: 1.1rem; }
+    .stat-label { font-size: 0.5rem; }
+    .stat-sub { font-size: 0.6rem; }
+    .stat-card { padding: 10px 12px; }
+
+    /* Section headers */
+    .section-hdr { font-size: 0.55rem; margin-bottom: 8px; }
+
+    /* Tables: smaller font, force scroll */
+    table { font-size: 0.55rem !important; }
+    td, th { padding: 5px 6px !important; }
+
+    /* Status pills */
+    .status-pill { font-size: 0.6rem; padding: 6px 12px; }
+
+    /* Streamlit columns: override to full width */
+    [data-testid="stHorizontalBlock"] {
+      flex-wrap: wrap !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+      min-width: 48% !important;
+      flex: 1 1 48% !important;
+    }
+  }
+
+  @media (max-width: 480px) {
+    /* Very small screens: single column */
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+      min-width: 100% !important;
+      flex: 1 1 100% !important;
+    }
+
+    .topbar-meta { gap: 10px; }
+    .logo-text { font-size: 0.85rem; }
+    .stat-value { font-size: 1rem; }
+    .badge { font-size: 0.5rem; padding: 1px 6px; }
+
+    table { font-size: 0.5rem !important; }
+    td, th { padding: 4px 4px !important; }
+  }
 </style>
 """, unsafe_allow_html=True)
 
