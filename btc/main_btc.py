@@ -128,7 +128,7 @@ def run() -> None:
     port.load()
 
     executor = Executor()
-    risk_mgr = RiskManager()
+    risk_mgr = RiskManager(port)
 
     # Start feeds
     rtds.start()
