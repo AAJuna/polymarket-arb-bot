@@ -285,6 +285,7 @@ def run() -> None:
                 if market and market.condition_id in skipped_condition_ids:
                     market = None
                 if market:
+                    current_market = market
                     ai_decision = None
                     url = _market_url(market)
                     state = State.WAITING
