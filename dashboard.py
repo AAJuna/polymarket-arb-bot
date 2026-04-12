@@ -1121,14 +1121,248 @@ with tab_analytics:
 # ---------------------------------------------------------------------------
 
 with tab_risk:
-    st.markdown('<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">// RISK TAB — COMING SOON</div>', unsafe_allow_html=True)
+    # ── Gauge row ────────────────────────────────────────────────────────────
+    g1, g2, g3 = st.columns(3)
+
+    def _gauge_color(ratio: float) -> str:
+        if ratio < 0.5:
+            return C_PRIMARY
+        if ratio < 0.8:
+            return C_WARNING
+        return C_DANGER
+
+    # Daily Loss gauge
+    dl_max = limit_pct if limit_pct > 0 else 100.0
+    dl_ratio = min(daily_loss / dl_max, 1.0)
+    dl_bar = _gauge_color(dl_ratio)
+    with g1:
+        fig_dl = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=daily_loss,
+            number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": dl_bar}},
+            title={"text": "DAILY LOSS", "font": {"size": 11, "family": "Courier New, monospace", "color": "#00ff4180"}},
+            gauge={
+                "axis": {"range": [0, dl_max], "tickfont": {"size": 9, "color": "#00ff4160"}},
+                "bar": {"color": dl_bar},
+                "bgcolor": "rgba(0,255,65,0.06)",
+                "steps": [
+                    {"range": [0, dl_max * 0.5], "color": "rgba(0,255,65,0.04)"},
+                    {"range": [dl_max * 0.5, dl_max * 0.8], "color": "rgba(255,170,0,0.04)"},
+                    {"range": [dl_max * 0.8, dl_max], "color": "rgba(255,0,68,0.04)"},
+                ],
+                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": dl_max * 0.8},
+            },
+        ))
+        fig_dl.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
+        )
+        st.plotly_chart(fig_dl, use_container_width=True, key="gauge_dl")
+        if blocked_daily:
+            dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">✗ BLOCKED</div>'
+        elif dl_ratio >= 0.8:
+            dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">⚠ APPROACHING LIMIT</div>'
+        else:
+            headroom = dl_max - daily_loss
+            dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ {headroom:.1f}% HEADROOM</div>'
+        st.markdown(dl_status, unsafe_allow_html=True)
+
+    # Drawdown gauge
+    dd_max = config.DRAWDOWN_STOP_THRESHOLD * 100
+    dd_ratio = min(dd / dd_max, 1.0) if dd_max > 0 else 0.0
+    dd_bar = _gauge_color(dd_ratio)
+    with g2:
+        fig_dd = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=dd,
+            number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": dd_bar}},
+            title={"text": "DRAWDOWN FROM PEAK", "font": {"size": 11, "family": "Courier New, monospace", "color": "#00ff4180"}},
+            gauge={
+                "axis": {"range": [0, dd_max], "tickfont": {"size": 9, "color": "#00ff4160"}},
+                "bar": {"color": dd_bar},
+                "bgcolor": "rgba(0,255,65,0.06)",
+                "steps": [
+                    {"range": [0, dd_max * 0.5], "color": "rgba(0,255,65,0.04)"},
+                    {"range": [dd_max * 0.5, dd_max * 0.8], "color": "rgba(255,170,0,0.04)"},
+                    {"range": [dd_max * 0.8, dd_max], "color": "rgba(255,0,68,0.04)"},
+                ],
+                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": dd_max * 0.8},
+            },
+        ))
+        fig_dd.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
+        )
+        st.plotly_chart(fig_dd, use_container_width=True, key="gauge_dd")
+        dd_reduce_threshold = config.DRAWDOWN_REDUCE_THRESHOLD * 100
+        if blocked_drawdown:
+            dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">✗ STOPPED</div>'
+        elif dd >= dd_reduce_threshold:
+            dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">⚠ BET SIZE HALVED</div>'
+        else:
+            dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ NORMAL SIZING</div>'
+        st.markdown(dd_status, unsafe_allow_html=True)
+
+    # Consecutive Losses gauge
+    cl_max = float(config.CONSECUTIVE_LOSS_PAUSE) if config.CONSECUTIVE_LOSS_PAUSE > 0 else 5.0
+    cl_ratio = min(cons_losses / cl_max, 1.0)
+    cl_bar = _gauge_color(cl_ratio)
+    with g3:
+        fig_cl = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=float(cons_losses),
+            number={"suffix": "", "font": {"size": 28, "family": "Courier New, monospace", "color": cl_bar}},
+            title={"text": "CONSECUTIVE LOSSES", "font": {"size": 11, "family": "Courier New, monospace", "color": "#00ff4180"}},
+            gauge={
+                "axis": {"range": [0, cl_max], "tickfont": {"size": 9, "color": "#00ff4160"}},
+                "bar": {"color": cl_bar},
+                "bgcolor": "rgba(0,255,65,0.06)",
+                "steps": [
+                    {"range": [0, cl_max * 0.5], "color": "rgba(0,255,65,0.04)"},
+                    {"range": [cl_max * 0.5, cl_max * 0.8], "color": "rgba(255,170,0,0.04)"},
+                    {"range": [cl_max * 0.8, cl_max], "color": "rgba(255,0,68,0.04)"},
+                ],
+                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": cl_max * 0.8},
+            },
+        ))
+        fig_cl.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
+        )
+        st.plotly_chart(fig_cl, use_container_width=True, key="gauge_cl")
+        if cons_wins > 0:
+            cl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">STREAK: W{cons_wins}</div>'
+        elif cons_losses > 0:
+            cl_status = f'<div style="text-align:center;font-size:0.6rem;color:{cl_bar};">STREAK: L{cons_losses}</div>'
+        else:
+            cl_status = f'<div style="text-align:center;font-size:0.6rem;color:#00ff4160;">STREAK: NONE</div>'
+        st.markdown(cl_status, unsafe_allow_html=True)
+
+    st.markdown('<hr style="border:none;border-top:1px solid #00ff4120;margin:20px 0;">', unsafe_allow_html=True)
+
+    # ── Risk Detail Cards ─────────────────────────────────────────────────────
+    d1, d2, d3 = st.columns(3)
+    _card_style = (
+        "border:1px solid #00ff4120;border-radius:4px;padding:14px 16px;"
+        "background:rgba(0,255,65,0.03);font-family:'Courier New',monospace;"
+    )
+    _lbl_style = "color:#00ff4160;font-size:0.6rem;"
+    _val_style = "color:#cccccc;font-size:0.75rem;font-weight:bold;"
+
+    def _detail_row(label: str, value: str) -> str:
+        return (
+            f'<div style="display:flex;justify-content:space-between;'
+            f'border-bottom:1px dotted #00ff4115;padding:5px 0;">'
+            f'<span style="{_lbl_style}">{label}</span>'
+            f'<span style="{_val_style}">{value}</span></div>'
+        )
+
+    with d1:
+        headroom_pct = max(dl_max - daily_loss, 0.0)
+        st.markdown(
+            f'<div style="{_card_style}">'
+            f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// DAILY LOSS LIMIT</div>'
+            + _detail_row("REALIZED LOSS", f"{daily_loss:.2f}%")
+            + _detail_row("LIMIT", f"{dl_max:.1f}%")
+            + _detail_row("HEADROOM", f"{headroom_pct:.2f}%")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with d2:
+        st.markdown(
+            f'<div style="{_card_style}">'
+            f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// DRAWDOWN CONTROL</div>'
+            + _detail_row("CURRENT DD", f"{dd:.2f}%")
+            + _detail_row("HALVE BETS AT", f"{config.DRAWDOWN_REDUCE_THRESHOLD * 100:.1f}%")
+            + _detail_row("STOP AT", f"{config.DRAWDOWN_STOP_THRESHOLD * 100:.1f}%")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with d3:
+        st.markdown(
+            f'<div style="{_card_style}">'
+            f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// LOSS STREAK CONTROL</div>'
+            + _detail_row("CURRENT STREAK", f"L{cons_losses}" if cons_losses > 0 else (f"W{cons_wins}" if cons_wins > 0 else "—"))
+            + _detail_row("HALVE BETS AT", f"{config.CONSECUTIVE_LOSS_REDUCE} losses")
+            + _detail_row("PAUSE AT", f"{config.CONSECUTIVE_LOSS_PAUSE} losses")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
 # ---------------------------------------------------------------------------
 # TAB: CONFIG (Task 7)
 # ---------------------------------------------------------------------------
 
 with tab_config:
-    st.markdown('<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">// CONFIG TAB — COMING SOON</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-hdr">// CONFIGURATION</div>', unsafe_allow_html=True)
+
+    def cfg_row(label: str, val: str) -> str:
+        return (
+            f'<div style="display:flex;justify-content:space-between;'
+            f'border-bottom:1px dotted #00ff4115;padding:4px 0;font-size:0.65rem;">'
+            f'<span style="color:#00ff4160;">{label}</span>'
+            f'<span style="color:#cccccc;">{val}</span></div>'
+        )
+
+    _panel_style = (
+        "border:1px solid #00ff4120;border-radius:4px;padding:14px 16px;"
+        "background:rgba(0,255,65,0.03);font-family:'Courier New',monospace;"
+    )
+    _panel_hdr = "color:#00ff41;font-size:0.65rem;margin-bottom:10px;"
+
+    cc1, cc2, cc3 = st.columns(3)
+
+    with cc1:
+        st.markdown(
+            f'<div style="{_panel_style}">'
+            f'<div style="{_panel_hdr}">// TRADING</div>'
+            + cfg_row("Min Edge", f"{config.MIN_EDGE_PCT:.1f}%")
+            + cfg_row("AI Min Edge", f"{config.AI_MIN_EDGE_PCT:.1f}%")
+            + cfg_row("AI Confidence", f"{config.MIN_AI_CONFIDENCE * 100:.0f}%")
+            + cfg_row("Bet Size", f"{config.BET_SIZE_PCT:.2f}%")
+            + cfg_row("Max Bet ($)", f"${config.MAX_BET_SIZE:,.0f}")
+            + cfg_row("Max Exposure", f"{config.MAX_EXPOSURE_PCT:.1f}%")
+            + cfg_row("Min Price", f"{config.ODDS_COMPARISON_MIN_PRICE:.2f}")
+            + cfg_row("Min Bookmakers", str(config.MIN_BOOKMAKER_COUNT))
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with cc2:
+        st.markdown(
+            f'<div style="{_panel_style}">'
+            f'<div style="{_panel_hdr}">// RISK</div>'
+            + cfg_row("Daily Loss Limit (%)", f"{config.DAILY_LOSS_LIMIT_PCT * 100:.1f}%")
+            + cfg_row("Drawdown Reduce (%)", f"{config.DRAWDOWN_REDUCE_THRESHOLD * 100:.1f}%")
+            + cfg_row("Drawdown Stop (%)", f"{config.DRAWDOWN_STOP_THRESHOLD * 100:.1f}%")
+            + cfg_row("Consec. Loss Reduce", str(config.CONSECUTIVE_LOSS_REDUCE))
+            + cfg_row("Consec. Loss Pause", str(config.CONSECUTIVE_LOSS_PAUSE))
+            + cfg_row("Pause Duration (min)", str(config.PAUSE_DURATION_MINUTES))
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+    with cc3:
+        _ai_model_short = config.AI_MODEL.split("/")[-1] if "/" in config.AI_MODEL else config.AI_MODEL
+        if len(_ai_model_short) > 20:
+            _ai_model_short = _ai_model_short[:18] + ".."
+        st.markdown(
+            f'<div style="{_panel_style}">'
+            f'<div style="{_panel_hdr}">// OPERATIONAL</div>'
+            + cfg_row("Poll Interval (s)", str(config.POLL_INTERVAL))
+            + cfg_row("AI Model", _ai_model_short)
+            + cfg_row("Paper Trading", "YES" if config.PAPER_TRADING else "NO")
+            + cfg_row("Min Volume 24h ($)", f"${config.MIN_VOLUME_24H:,.0f}")
+            + cfg_row("Min Liquidity ($)", f"${config.MIN_LIQUIDITY:,.0f}")
+            + cfg_row("Realtime Feed", "ON" if config.REALTIME_MARKET_WS_ENABLED else "OFF")
+            + cfg_row("Realtime Gate", "ON" if config.ENABLE_REALTIME_EXECUTION_GATE else "OFF")
+            + cfg_row("Max Spread", f"{config.REALTIME_GATE_MAX_SPREAD:.4f}")
+            + cfg_row("Min Depth ($)", f"${config.REALTIME_GATE_MIN_DEPTH_USD:,.0f}")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
 # ---------------------------------------------------------------------------
 # Footer
