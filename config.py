@@ -152,6 +152,7 @@ POLL_INTERVAL: int = int(os.getenv("POLL_INTERVAL", "7"))
 STALE_ORDER_TIMEOUT: int = 30             # seconds before cancelling unfilled orders
 MAX_CONCURRENT_ORDERS: int = 10
 PORTFOLIO_SAVE_INTERVAL: int = 300        # 5 minutes
+BANKROLL_HISTORY_MAX_ENTRIES: int = int(os.getenv("BANKROLL_HISTORY_MAX_ENTRIES", "2000"))
 PAPER_TRADING: bool = os.getenv("PAPER_TRADING", "true").lower() == "true"
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 RESET_STATE_ON_START: bool = os.getenv("RESET_STATE_ON_START", "false").lower() == "true"
