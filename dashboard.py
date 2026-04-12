@@ -486,6 +486,33 @@ blocked_drawdown = dd >= config.DRAWDOWN_STOP_THRESHOLD * 100
 blocked_cons = cons_losses >= config.CONSECUTIVE_LOSS_PAUSE
 
 # ---------------------------------------------------------------------------
+# Historical risk metrics (all-time from trade_history)
+# ---------------------------------------------------------------------------
+max_loss_streak = 0
+max_drawdown_pct = 0.0
+total_lost = 0.0
+if history:
+    # Max loss streak
+    streak = 0
+    for t in history:
+        if (t.get("pnl") or 0) <= 0:
+            streak += 1
+            max_loss_streak = max(max_loss_streak, streak)
+        else:
+            streak = 0
+    # Total losses
+    total_lost = sum(abs(t.get("pnl") or 0) for t in history if (t.get("pnl") or 0) < 0)
+    # Max drawdown from bankroll history
+    if bankroll_hist:
+        running_peak = 0.0
+        for entry in bankroll_hist:
+            b = entry.get("bankroll", 0)
+            running_peak = max(running_peak, b)
+            if running_peak > 0:
+                dd_hist = (running_peak - b) / running_peak * 100
+                max_drawdown_pct = max(max_drawdown_pct, dd_hist)
+
+# ---------------------------------------------------------------------------
 # Status banner
 # ---------------------------------------------------------------------------
 
@@ -656,6 +683,28 @@ with tab_overview:
         <div style="height:4px;background:#00ff4115;border-radius:2px;overflow:hidden;">
           <div style="width:{cl_ratio*100:.0f}%;height:100%;background:{cl_color};box-shadow:0 0 6px {cl_color};border-radius:2px;"></div>
         </div>''')
+
+        # Historical metrics
+        if history:
+            mdd_color = C_DANGER if max_drawdown_pct >= 20 else (C_WARNING if max_drawdown_pct >= 10 else "#555")
+            mls_color = C_DANGER if max_loss_streak >= 7 else (C_WARNING if max_loss_streak >= 4 else "#555")
+            tl_color = C_DANGER if total_lost >= starting * 0.2 else "#555"
+            st.html(f'''
+            <div style="margin-top:14px;padding-top:10px;border-top:1px solid #00ff4115;">
+              <div style="color:{C_PRIMARY};font-size:0.55rem;margin-bottom:8px;letter-spacing:1px;">ALL-TIME</div>
+              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{mdd_color};margin-bottom:6px;">
+                <span>MAX DRAWDOWN</span><span>{max_drawdown_pct:.1f}%</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{mls_color};margin-bottom:6px;">
+                <span>MAX LOSS STREAK</span><span>{max_loss_streak}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{tl_color};margin-bottom:6px;">
+                <span>TOTAL LOST</span><span>${total_lost:.2f}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:#555;">
+                <span>WIN RATE</span><span>{win_rate:.0f}% ({winning}W / {total_trades - winning}L)</span>
+              </div>
+            </div>''')
 
     with bot_right:
         st.html('<div class="section-hdr">// RECENT TRADES</div>')
