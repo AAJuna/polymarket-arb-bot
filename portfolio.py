@@ -688,7 +688,20 @@ class Portfolio:
                         outcome_prices.append(0.0)
 
                 resolved = bool(market_status.get("resolved"))
-                if not resolved and closed and len(outcome_prices) >= 2:
+
+                # Fallback: if end_date has passed, treat as ended
+                ended_by_time = False
+                if pos.end_date:
+                    try:
+                        from datetime import datetime, timezone
+                        end_dt = datetime.fromisoformat(pos.end_date.replace("Z", "+00:00"))
+                        ended_by_time = datetime.now(timezone.utc) > end_dt
+                    except Exception:
+                        pass
+
+                market_ended = resolved or closed or ended_by_time
+
+                if not resolved and market_ended and len(outcome_prices) >= 2:
                     yes_payout = outcome_prices[0]
                     no_payout = outcome_prices[1]
                     resolved = (
@@ -697,7 +710,7 @@ class Portfolio:
                         or (abs(yes_payout - 0.5) <= 0.01 and abs(no_payout - 0.5) <= 0.01)
                     )
 
-                if resolved and closed and len(outcome_prices) >= 2:
+                if market_ended and len(outcome_prices) >= 2:
                     payout_per_share = outcome_prices[0] if pos.side == "YES" else outcome_prices[1]
                     self.close_position(pid, payout_per_share)
             except Exception as e:

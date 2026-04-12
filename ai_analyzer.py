@@ -75,11 +75,14 @@ class AIAnalysis:
 
     @property
     def is_valid(self) -> bool:
-        return (
-            self.confidence >= config.MIN_AI_CONFIDENCE
-            and self.edge_detected
-            and self.recommended_side != "SKIP"
-        )
+        if self.recommended_side == "SKIP":
+            return False
+        if self.confidence < config.MIN_AI_CONFIDENCE:
+            return False
+        # edge_detected is advisory — high confidence + clear side is enough
+        if not self.edge_detected and self.confidence < 0.75:
+            return False
+        return True
 
     def supports_candidate(self, side: str, price: float) -> bool:
         return (
@@ -299,11 +302,9 @@ class AIAnalyzer:
         longshot_warning = ""
         if candidate_market_price < 0.20:
             longshot_warning = (
-                "\n⚠ LONGSHOT WARNING: This token is priced below $0.20. At very low prices, "
-                "large nominal edge percentages are common but almost always reflect data "
-                "mismatches, fuzzy-matching errors, or thin-market noise rather than real "
-                "mispricing. Require STRONG independent evidence before recommending BUY. "
-                "Default to SKIP unless you have high conviction from multiple data sources."
+                "\n⚠ NOTE: This token is priced below $0.20. Apply extra scrutiny to "
+                "edge calculations at low prices, as nominal edge percentages can be "
+                "inflated. Evaluate the actual evidence before deciding."
             )
 
         bookmaker_note = ""
@@ -322,10 +323,9 @@ End date: {opp.end_date.strftime('%Y-%m-%d %H:%M UTC')}
 {odds_section}{bookmaker_note}
 {matchup_section}{longshot_warning}
 
-Assess whether the candidate trade has a real edge or is a data artifact. Use the
-structured match model when present, and do not recommend the opposite side unless
-the evidence is strong enough to invalidate the candidate outright. Prefer SKIP over
-guessing when the model or evidence is weak.
+Assess whether the candidate trade has a real edge. Use the structured match model
+when present, and do not recommend the opposite side unless the evidence is strong
+enough to invalidate the candidate outright.
 
 Consider:
 - Does the candidate side's fair probability exceed its market price by a defensible margin?
@@ -333,8 +333,7 @@ Consider:
 - Is the pricing discrepancy likely to persist until expiry?
 - Are there upcoming events (injuries, news) that could affect the outcome?
 - Is the market liquid enough for meaningful edge?
-- Is the edge likely real, or is it an artifact of fuzzy team-name matching or stale odds?
-- For low-priced tokens (<$0.20): is there strong independent evidence, or is the gap just noise?
+- For low-priced tokens (<$0.20): apply extra scrutiny but do not auto-reject — evaluate the actual evidence.
 
 For predicted_probability, return the estimated true probability of your recommended
 side being correct, not the market YES probability unless you recommend YES.
