@@ -70,7 +70,7 @@ DAILY_LOSS_LIMIT_PCT: float = 0.25
 # ---------------------------------------------------------------------------
 POLL_INTERVAL_ACTIVE: float = float(os.getenv("BTC_POLL_INTERVAL_ACTIVE", "1.0"))
 POLL_INTERVAL_IDLE: float = float(os.getenv("BTC_POLL_INTERVAL_IDLE", "5.0"))
-SCANNER_CACHE_TTL: int = 60  # seconds — windows are predictable every 5 min
+SCANNER_CACHE_TTL: int = 30  # seconds — balance between speed and price freshness
 LOG_LEVEL: str = os.getenv("BTC_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")).upper()
 PORTFOLIO_SUBDIR: str = "btc"
 

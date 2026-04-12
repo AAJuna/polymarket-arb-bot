@@ -275,6 +275,7 @@ def run() -> None:
                         logger.warning("No BTC price at window start -- skipping")
                         engine.reset()
                         current_market = None
+                        scanner.invalidate_cache()
                         state = State.IDLE
                 _sleep(0.5, running)
 
@@ -290,6 +291,7 @@ def run() -> None:
                     logger.info("Entry deadline passed -- skipping to next window")
                     engine.reset()
                     current_market = None
+                    scanner.invalidate_cache()
                     state = State.IDLE
                     continue
 
@@ -378,6 +380,7 @@ def run() -> None:
                     engine.reset()
                     current_market = None
                     current_position_id = None
+                    scanner.invalidate_cache()
                     state = State.IDLE
                     logger.info("Resolution complete -- moving to next window")
                 else:
