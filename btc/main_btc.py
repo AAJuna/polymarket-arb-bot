@@ -448,8 +448,12 @@ def run() -> None:
                         strategy=ai_decision.strategy,
                     )
 
+                    # Dynamic sizing: scale by confidence
+                    conf_mult = 1.0 + (ai_decision.confidence - 0.55) / 0.45 * (cfg.BET_CONFIDENCE_SCALE - 1.0)
+                    conf_mult = max(1.0, min(cfg.BET_CONFIDENCE_SCALE, conf_mult))
+                    adjusted_pct = cfg.BET_SIZE_PCT * conf_mult
                     size_dollars = risk_mgr.get_position_size(
-                        adjusted_bet_pct=cfg.BET_SIZE_PCT,
+                        adjusted_bet_pct=adjusted_pct,
                         edge_pct=0.0,
                         price=opp.price,
                         ai_confidence=ai_decision.confidence,
@@ -467,8 +471,25 @@ def run() -> None:
                             state = State.TRADING
                             logger.info(
                                 f"[{mid}] ENTRY {ai_decision.side} @ {opp.price:.2f}  "
+                                f"${size_dollars:.2f} ({adjusted_pct:.1f}%)  "
                                 f"conf={ai_decision.confidence:.0%}  "
                                 f"strategy={ai_decision.strategy}"
+                            )
+                            # Journal
+                            from btc.trade_journal import log_trade
+                            log_trade(
+                                market_id=mid,
+                                side=ai_decision.side,
+                                entry_price=opp.price,
+                                cost=size_dollars,
+                                confidence=ai_decision.confidence,
+                                strategy=ai_decision.strategy,
+                                reasoning=ai_decision.reasoning,
+                                btc_price_at_entry=rtds.get_btc_price() or 0,
+                                up_price=current_market.up_price,
+                                down_price=current_market.down_price,
+                                window_start=current_market.window_start.isoformat(),
+                                window_end=current_market.window_end.isoformat(),
                             )
                     else:
                         logger.info(f"Risk blocked: {block_reason}")
@@ -492,11 +513,36 @@ def run() -> None:
                     strike = engine._strike_price or 0
                     direction = "UP" if btc_price >= strike else "DOWN"
                     if cycle % 10 == 0:
+                        mid = _market_id_slug(current_market)
                         logger.info(
-                            f"Position open | BTC=${btc_price:,.2f}  "
-                            f"direction={direction}  "
-                            f"remaining={time_remaining:.0f}s"
+                            f"[{mid}] BTC=${btc_price:,.2f}  "
+                            f"dir={direction}  remain={time_remaining:.0f}s"
                         )
+
+                # Check for early exit (take profit / stop loss)
+                exited = port.check_early_exits()
+                if exited > 0:
+                    # Position was closed early — log result
+                    from btc.trade_journal import log_result
+                    mid = _market_id_slug(current_market)
+                    # Find the trade in history
+                    if port.state.trade_history:
+                        last_trade = port.state.trade_history[-1]
+                        log_result(
+                            market_id=mid,
+                            pnl=last_trade.get("pnl", 0) or 0,
+                            exit_price=last_trade.get("exit_price", 0) or 0,
+                            status=last_trade.get("status", "early_exit"),
+                            strategy=ai_decision.strategy if ai_decision else "",
+                        )
+                    port.log_status()
+                    engine.reset()
+                    current_market = None
+                    current_position_id = None
+                    ai_decision = None
+                    scanner.invalidate_cache()
+                    state = State.IDLE
+                    continue
 
                 _write_signal_status(state, rtds, engine, current_market, position_id=current_position_id, ai_stats=ai.stats, ai_decision=ai_decision)
 
@@ -512,6 +558,18 @@ def run() -> None:
             elif state == State.RESOLVING:
                 has_open = current_position_id in port.state.open_positions
                 if not has_open or current_position_id is None:
+                    # Log result to journal
+                    from btc.trade_journal import log_result
+                    mid = _market_id_slug(current_market) if current_market else ""
+                    if port.state.trade_history:
+                        last_trade = port.state.trade_history[-1]
+                        log_result(
+                            market_id=mid,
+                            pnl=last_trade.get("pnl", 0) or 0,
+                            exit_price=last_trade.get("exit_price", 0) or 0,
+                            status=last_trade.get("status", "resolved"),
+                            strategy=ai_decision.strategy if ai_decision else "",
+                        )
                     port.log_status()
                     engine.reset()
                     current_market = None

@@ -646,9 +646,12 @@ class Portfolio:
             self._update_peaks()
 
         action = "PROFIT-TAKE" if pnl > 0 else "STOP-LOSS"
+        _slug = pos.slug or pos.market_slug or ""
+        _mid = _slug.split("-")[-1] if _slug and "-" in _slug else ""
+        _label = f"[{_mid}]" if _mid else pos.question[:50]
         logger.log(
             TRADE_LEVEL,
-            f"TRADE EARLY EXIT ({action}) | {pos.question[:50]} | "
+            f"TRADE {action} | {_label} | "
             f"sell@${sell_price:.3f} | pnl=${pnl:+.2f} | "
             f"bankroll=${self.state.current_bankroll:.2f}"
         )

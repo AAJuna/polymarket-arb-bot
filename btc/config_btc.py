@@ -58,7 +58,8 @@ MOMENTUM_CAP: float = 0.05  # max +/-5% adjustment
 # Trading parameters
 # ---------------------------------------------------------------------------
 MAX_POSITION_SIZE: float = float(os.getenv("BTC_MAX_POSITION_SIZE", "100.0"))
-BET_SIZE_PCT: float = float(os.getenv("BTC_BET_SIZE_PCT", "2.0"))
+BET_SIZE_PCT: float = float(os.getenv("BTC_BET_SIZE_PCT", "5.0"))  # base 5% of bankroll
+BET_CONFIDENCE_SCALE: float = 2.0  # at max confidence, bet up to 2x base
 ENTRY_DEADLINE_SEC: float = float(os.getenv("BTC_ENTRY_DEADLINE_SEC", "180.0"))
 EXIT_BEFORE_END_SEC: float = float(os.getenv("BTC_EXIT_BEFORE_END_SEC", "30.0"))
 MAX_CONCURRENT_WINDOWS: int = int(os.getenv("BTC_MAX_CONCURRENT_WINDOWS", "1"))
