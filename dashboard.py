@@ -1652,19 +1652,29 @@ with tab_btc:
             </div>
           </div>
           <div class="card">
-            <div class="card-title"><span class="ind"></span>HAIKU API COST</div>
+            <div class="card-title"><span class="ind"></span>API COST (ALL-TIME)</div>
             <div style="display:flex;justify-content:space-around;padding:4px 0">
               <div style="text-align:center">
-                <div style="color:var(--org);font-size:16px;font-weight:700;font-family:Orbitron,sans-serif">{_ai_st.get('total_calls', 0)}</div>
+                <div style="color:var(--org);font-size:18px;font-weight:700;font-family:Orbitron,sans-serif">{_ai_st.get('total_calls', 0)}</div>
                 <div style="color:var(--dim);font-size:7px;letter-spacing:1px">CALLS</div>
               </div>
               <div style="text-align:center">
-                <div style="color:var(--cyn);font-size:16px;font-weight:700;font-family:Orbitron,sans-serif">${_ai_st.get('total_cost_usd', 0):.4f}</div>
-                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">TOTAL</div>
+                <div style="color:var(--cyn);font-size:18px;font-weight:700;font-family:Orbitron,sans-serif">${_ai_st.get('total_cost_usd', 0):.4f}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">TOTAL $</div>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-around;padding:4px 0;margin-top:2px;border-top:1px solid #1a1a2e">
+              <div style="text-align:center">
+                <div style="color:#6a6a8a;font-size:11px;font-family:Orbitron,sans-serif">{_ai_st.get('total_input_tokens', 0):,}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">IN TOK</div>
               </div>
               <div style="text-align:center">
-                <div style="color:var(--grn);font-size:16px;font-weight:700;font-family:Orbitron,sans-serif">${_ai_st.get('total_cost_usd', 0) / max(1, _ai_st.get('total_calls', 1)):.4f}</div>
-                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">AVG</div>
+                <div style="color:#6a6a8a;font-size:11px;font-family:Orbitron,sans-serif">{_ai_st.get('total_output_tokens', 0):,}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">OUT TOK</div>
+              </div>
+              <div style="text-align:center">
+                <div style="color:var(--grn);font-size:11px;font-family:Orbitron,sans-serif">${_ai_st.get('total_cost_usd', 0) / max(1, _ai_st.get('total_calls', 1)):.5f}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">$/CALL</div>
               </div>
             </div>
           </div>

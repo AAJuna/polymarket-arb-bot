@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from btc import config_btc as cfg
@@ -62,13 +63,19 @@ class BtcAIAnalysis:
         )
 
 
+AI_STATS_FILE = Path("data/btc/ai_stats.json")
+
+
 class BtcAIAnalyzer:
     """Analyze BTC price data using Claude Haiku."""
 
     def __init__(self) -> None:
         self._client = None
         self._total_calls = 0
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
         self._total_cost = 0.0
+        self._load_stats()
 
         api_key = cfg.ANTHROPIC_API_KEY if hasattr(cfg, "ANTHROPIC_API_KEY") else ""
         if not api_key:
@@ -82,6 +89,36 @@ class BtcAIAnalyzer:
                 self._client = Anthropic(api_key=api_key)
             except ImportError:
                 logger.warning("anthropic package not installed — AI analysis disabled")
+
+    def _load_stats(self) -> None:
+        """Load accumulated stats from disk."""
+        try:
+            if AI_STATS_FILE.exists():
+                with open(AI_STATS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._total_calls = data.get("total_calls", 0)
+                self._total_input_tokens = data.get("total_input_tokens", 0)
+                self._total_output_tokens = data.get("total_output_tokens", 0)
+                self._total_cost = data.get("total_cost_usd", 0.0)
+                logger.info(f"AI stats loaded: {self._total_calls} calls, ${self._total_cost:.4f}")
+        except Exception:
+            pass
+
+    def _save_stats(self) -> None:
+        """Persist accumulated stats to disk."""
+        try:
+            AI_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = AI_STATS_FILE.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({
+                    "total_calls": self._total_calls,
+                    "total_input_tokens": self._total_input_tokens,
+                    "total_output_tokens": self._total_output_tokens,
+                    "total_cost_usd": round(self._total_cost, 6),
+                }, f, indent=2)
+            tmp.replace(AI_STATS_FILE)
+        except Exception:
+            pass
 
     @property
     def enabled(self) -> bool:
@@ -136,11 +173,14 @@ class BtcAIAnalyzer:
                 reasoning=str(tool_result.get("reasoning", "")),
             )
 
-            # Track costs
-            self._total_calls += 1
+            # Track costs (persisted to disk)
             input_tok = response.usage.input_tokens if response.usage else 200
             output_tok = response.usage.output_tokens if response.usage else 50
+            self._total_calls += 1
+            self._total_input_tokens += input_tok
+            self._total_output_tokens += output_tok
             self._total_cost += (input_tok * 1.0 + output_tok * 5.0) / 1_000_000
+            self._save_stats()
 
             verdict = "PASS" if analysis.is_valid else "SKIP"
             logger.info(
@@ -224,5 +264,7 @@ Rules:
     def stats(self) -> dict:
         return {
             "total_calls": self._total_calls,
-            "total_cost_usd": round(self._total_cost, 4),
+            "total_input_tokens": self._total_input_tokens,
+            "total_output_tokens": self._total_output_tokens,
+            "total_cost_usd": round(self._total_cost, 6),
         }
