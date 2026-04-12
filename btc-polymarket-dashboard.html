@@ -246,9 +246,11 @@
 
   @media (max-width: 768px) {
     body {
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
       height: auto;
       min-height: 100vh;
+      -webkit-overflow-scrolling: touch;
     }
 
     .top-bar {
@@ -268,19 +270,24 @@
       background: var(--border);
       gap: 1px;
       flex: none;
+      overflow: visible;
+      min-height: auto;
     }
 
     .trades-panel {
       max-height: 250px;
+      overflow-y: auto;
       grid-column: auto; grid-row: auto;
     }
 
     .middle-col {
       grid-column: auto; grid-row: auto;
       max-height: none;
+      overflow: visible;
     }
     .middle-col > .card.console-panel {
       max-height: 200px;
+      overflow-y: auto;
     }
 
     .right-col {
@@ -288,6 +295,7 @@
       display: flex;
       flex-direction: column;
       gap: 1px;
+      overflow: visible;
     }
 
     .main-chart {
