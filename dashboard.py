@@ -1361,13 +1361,14 @@ with tab_risk:
             f'<span style="{_val_style}">{value}</span></div>'
         )
 
+    dl_limit = limit_pct if limit_pct > 0 else 100.0
     with d1:
-        headroom_pct = max(dl_max - daily_loss, 0.0)
+        headroom_pct = max(dl_limit - daily_loss, 0.0)
         st.html(
             f'<div style="{_card_style}">'
             f'<div style="color:{C_PRIMARY};font-size:0.65rem;margin-bottom:10px;">// DAILY LOSS LIMIT</div>'
             + _detail_row("REALIZED LOSS", f"{daily_loss:.2f}%")
-            + _detail_row("LIMIT", f"{dl_max:.1f}%")
+            + _detail_row("LIMIT", f"{dl_limit:.1f}%")
             + _detail_row("HEADROOM", f"{headroom_pct:.2f}%")
             + '</div>',
         )
