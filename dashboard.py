@@ -1244,112 +1244,103 @@ with tab_risk:
             return C_WARNING
         return C_DANGER
 
-    # Daily Loss gauge
-    dl_max = limit_pct if limit_pct > 0 else 100.0
-    dl_ratio = min(daily_loss / dl_max, 1.0)
-    dl_bar = _gauge_color(dl_ratio)
+    # Max Drawdown gauge (all-time)
+    mdd_max = config.DRAWDOWN_STOP_THRESHOLD * 100
+    mdd_ratio = min(max_drawdown_pct / mdd_max, 1.0) if mdd_max > 0 else 0.0
+    mdd_bar = _gauge_color(mdd_ratio)
     with g1:
-        fig_dl = go.Figure(go.Indicator(
+        fig_mdd = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=daily_loss,
-            number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": dl_bar}},
-            title={"text": "DAILY LOSS", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
+            value=max_drawdown_pct,
+            number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": mdd_bar}},
+            title={"text": "MAX DRAWDOWN", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
             gauge={
-                "axis": {"range": [0, dl_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
-                "bar": {"color": dl_bar},
+                "axis": {"range": [0, mdd_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
+                "bar": {"color": mdd_bar},
                 "bgcolor": "rgba(0,255,65,0.06)",
                 "steps": [
-                    {"range": [0, dl_max * 0.5], "color": "rgba(0,255,65,0.04)"},
-                    {"range": [dl_max * 0.5, dl_max * 0.8], "color": "rgba(255,170,0,0.04)"},
-                    {"range": [dl_max * 0.8, dl_max], "color": "rgba(255,0,68,0.04)"},
+                    {"range": [0, mdd_max * 0.5], "color": "rgba(0,255,65,0.08)"},
+                    {"range": [mdd_max * 0.5, mdd_max * 0.8], "color": "rgba(255,170,0,0.08)"},
+                    {"range": [mdd_max * 0.8, mdd_max], "color": "rgba(255,0,68,0.08)"},
                 ],
-                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": dl_max * 0.8},
+                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": mdd_max * 0.8},
             },
         ))
-        fig_dl.update_layout(
+        fig_mdd.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
         )
-        st.plotly_chart(fig_dl, width="stretch", key="gauge_dl")
-        if blocked_daily:
-            dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">✗ BLOCKED</div>'
-        elif dl_ratio >= 0.8:
-            dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">⚠ APPROACHING LIMIT</div>'
+        st.plotly_chart(fig_mdd, width="stretch", key="gauge_mdd")
+        if max_drawdown_pct >= mdd_max * 0.8:
+            mdd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">⚠ CRITICAL</div>'
+        elif max_drawdown_pct >= mdd_max * 0.5:
+            mdd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">⚠ ELEVATED</div>'
         else:
-            headroom = dl_max - daily_loss
-            dl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ {headroom:.1f}% HEADROOM</div>'
-        st.html(dl_status)
+            mdd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ HEALTHY</div>'
+        st.html(mdd_status)
 
-    # Drawdown gauge
-    dd_max = config.DRAWDOWN_STOP_THRESHOLD * 100
-    dd_ratio = min(dd / dd_max, 1.0) if dd_max > 0 else 0.0
-    dd_bar = _gauge_color(dd_ratio)
+    # Win Rate gauge (all-time)
+    wr_bar = C_DANGER if win_rate < 30 else (C_WARNING if win_rate < 50 else C_PRIMARY)
     with g2:
-        fig_dd = go.Figure(go.Indicator(
+        fig_wr = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=dd,
-            number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": dd_bar}},
-            title={"text": "DRAWDOWN FROM PEAK", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
+            value=win_rate,
+            number={"suffix": "%", "font": {"size": 28, "family": "Courier New, monospace", "color": wr_bar}},
+            title={"text": "WIN RATE", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
             gauge={
-                "axis": {"range": [0, dd_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
-                "bar": {"color": dd_bar},
+                "axis": {"range": [0, 100], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
+                "bar": {"color": wr_bar},
                 "bgcolor": "rgba(0,255,65,0.06)",
                 "steps": [
-                    {"range": [0, dd_max * 0.5], "color": "rgba(0,255,65,0.04)"},
-                    {"range": [dd_max * 0.5, dd_max * 0.8], "color": "rgba(255,170,0,0.04)"},
-                    {"range": [dd_max * 0.8, dd_max], "color": "rgba(255,0,68,0.04)"},
+                    {"range": [0, 30], "color": "rgba(255,0,68,0.08)"},
+                    {"range": [30, 50], "color": "rgba(255,170,0,0.08)"},
+                    {"range": [50, 100], "color": "rgba(0,255,65,0.08)"},
                 ],
-                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": dd_max * 0.8},
+                "threshold": {"line": {"color": C_WARNING, "width": 2}, "thickness": 0.75, "value": 50},
             },
         ))
-        fig_dd.update_layout(
+        fig_wr.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
         )
-        st.plotly_chart(fig_dd, width="stretch", key="gauge_dd")
-        dd_reduce_threshold = config.DRAWDOWN_REDUCE_THRESHOLD * 100
-        if blocked_drawdown:
-            dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_DANGER};">✗ STOPPED</div>'
-        elif dd >= dd_reduce_threshold:
-            dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">⚠ BET SIZE HALVED</div>'
-        else:
-            dd_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">✓ NORMAL SIZING</div>'
-        st.html(dd_status)
+        st.plotly_chart(fig_wr, width="stretch", key="gauge_wr")
+        wr_status = f'<div style="text-align:center;font-size:0.6rem;color:{wr_bar};">{winning}W / {total_trades - winning}L</div>'
+        st.html(wr_status)
 
-    # Consecutive Losses gauge
-    cl_max = float(config.CONSECUTIVE_LOSS_PAUSE) if config.CONSECUTIVE_LOSS_PAUSE > 0 else 5.0
-    cl_ratio = min(cons_losses / cl_max, 1.0)
-    cl_bar = _gauge_color(cl_ratio)
+    # Max Loss Streak gauge (all-time)
+    mls_max = float(config.CONSECUTIVE_LOSS_PAUSE) if config.CONSECUTIVE_LOSS_PAUSE > 0 else 5.0
+    mls_ratio = min(max_loss_streak / mls_max, 1.0)
+    mls_bar = _gauge_color(mls_ratio)
     with g3:
-        fig_cl = go.Figure(go.Indicator(
+        fig_mls = go.Figure(go.Indicator(
             mode="gauge+number",
-            value=float(cons_losses),
-            number={"suffix": "", "font": {"size": 28, "family": "Courier New, monospace", "color": cl_bar}},
-            title={"text": "CONSECUTIVE LOSSES", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
+            value=float(max_loss_streak),
+            number={"suffix": "", "font": {"size": 28, "family": "Courier New, monospace", "color": mls_bar}},
+            title={"text": "MAX LOSS STREAK", "font": {"size": 11, "family": "Courier New, monospace", "color": "rgba(0,255,65,0.5)"}},
             gauge={
-                "axis": {"range": [0, cl_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
-                "bar": {"color": cl_bar},
+                "axis": {"range": [0, mls_max], "tickfont": {"size": 9, "color": "rgba(0,255,65,0.38)"}},
+                "bar": {"color": mls_bar},
                 "bgcolor": "rgba(0,255,65,0.06)",
                 "steps": [
-                    {"range": [0, cl_max * 0.5], "color": "rgba(0,255,65,0.04)"},
-                    {"range": [cl_max * 0.5, cl_max * 0.8], "color": "rgba(255,170,0,0.04)"},
-                    {"range": [cl_max * 0.8, cl_max], "color": "rgba(255,0,68,0.04)"},
+                    {"range": [0, mls_max * 0.5], "color": "rgba(0,255,65,0.08)"},
+                    {"range": [mls_max * 0.5, mls_max * 0.8], "color": "rgba(255,170,0,0.08)"},
+                    {"range": [mls_max * 0.8, mls_max], "color": "rgba(255,0,68,0.08)"},
                 ],
-                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": cl_max * 0.8},
+                "threshold": {"line": {"color": C_DANGER, "width": 2}, "thickness": 0.75, "value": mls_max * 0.8},
             },
         ))
-        fig_cl.update_layout(
+        fig_mls.update_layout(
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             height=200, margin={"l": 20, "r": 20, "t": 40, "b": 10},
         )
-        st.plotly_chart(fig_cl, width="stretch", key="gauge_cl")
+        st.plotly_chart(fig_mls, width="stretch", key="gauge_mls")
         if cons_wins > 0:
-            cl_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">STREAK: W{cons_wins}</div>'
+            mls_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_PRIMARY};">NOW: W{cons_wins}</div>'
         elif cons_losses > 0:
-            cl_status = f'<div style="text-align:center;font-size:0.6rem;color:{cl_bar};">STREAK: L{cons_losses}</div>'
+            mls_status = f'<div style="text-align:center;font-size:0.6rem;color:{C_WARNING};">NOW: L{cons_losses}</div>'
         else:
-            cl_status = f'<div style="text-align:center;font-size:0.6rem;color:#00ff4160;">STREAK: NONE</div>'
-        st.html(cl_status)
+            mls_status = f'<div style="text-align:center;font-size:0.6rem;color:#00ff4160;">NOW: —</div>'
+        st.html(mls_status)
 
     st.html('<hr style="border:none;border-top:1px solid #00ff4120;margin:20px 0;">')
 
