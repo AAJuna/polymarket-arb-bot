@@ -26,6 +26,7 @@ AI_STATS_FILE = Path("data/ai_stats.json")
 SHADOW_REPORT_FILE = Path("data/shadow_report.json")
 STRATEGY_REPORT_FILE = Path("data/strategy_expectancy.json")
 REALTIME_FEED_STATUS_FILE = Path("data/realtime_feed_status.json")
+BTC_PORTFOLIO_FILE = Path("data/btc/portfolio.json")
 REFRESH_SECONDS = 10
 
 # ---------------------------------------------------------------------------
@@ -441,6 +442,7 @@ shadow_report = load_json(SHADOW_REPORT_FILE)
 strategy_report = load_json(STRATEGY_REPORT_FILE)
 ai_stats = load_json(AI_STATS_FILE)
 feed_status = load_json(REALTIME_FEED_STATUS_FILE)
+btc_data = load_json(BTC_PORTFOLIO_FILE)
 
 # ---------------------------------------------------------------------------
 # Header
@@ -588,8 +590,8 @@ else:
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_overview, tab_positions, tab_analytics, tab_risk, tab_config = st.tabs([
-    "[ OVERVIEW ]", "[ POSITIONS ]", "[ ANALYTICS ]", "[ RISK ]", "[ CONFIG ]"
+tab_overview, tab_positions, tab_analytics, tab_risk, tab_btc, tab_config = st.tabs([
+    "[ OVERVIEW ]", "[ POSITIONS ]", "[ ANALYTICS ]", "[ RISK ]", "[ BTC 5M ]", "[ CONFIG ]"
 ])
 
 # ---------------------------------------------------------------------------
@@ -1462,6 +1464,231 @@ with tab_config:
             + cfg_row("Min Depth ($)", f"${config.REALTIME_GATE_MIN_DEPTH_USD:,.0f}")
             + '</div>',
         )
+
+# ---------------------------------------------------------------------------
+# TAB: BTC 5M
+# ---------------------------------------------------------------------------
+
+with tab_btc:
+    if not btc_data:
+        st.html(
+            '<div style="color:#00ff4140;font-size:0.8rem;padding:40px 0;text-align:center">'
+            '// BTC BOT NOT ACTIVE — NO DATA YET<br>'
+            '<span style="font-size:0.65rem">Start: python -m btc.main_btc</span></div>'
+        )
+    else:
+        btc_bankroll = btc_data.get("current_bankroll", 0)
+        btc_starting = btc_data.get("starting_bankroll", 0)
+        btc_peak = btc_data.get("peak_bankroll", 0)
+        btc_day_start = btc_data.get("day_start_bankroll", 0)
+        btc_open = btc_data.get("open_positions", {})
+        btc_history = btc_data.get("trade_history", [])
+        btc_bankroll_hist = btc_data.get("bankroll_history", [])
+
+        btc_open_cost = sum(p.get("cost_basis", 0) for p in btc_open.values())
+        btc_realized = btc_bankroll + btc_open_cost
+        btc_total_pnl = btc_realized - btc_starting
+        btc_roi = (btc_realized - btc_starting) / btc_starting * 100 if btc_starting > 0 else 0.0
+        btc_daily_pnl = btc_realized - btc_day_start if btc_day_start > 0 else 0.0
+        btc_total_trades = len(btc_history) + len(btc_open)
+        btc_wins = sum(1 for t in btc_history if (t.get("pnl") or 0) > 0)
+        btc_win_rate = (btc_wins / len(btc_history) * 100) if btc_history else 0.0
+
+        # --- Hero Cards ---
+        st.html('<div class="section-hdr">// BTC 5-MINUTE BOT</div>')
+
+        b1, b2, b3, b4 = st.columns(4)
+
+        with b1:
+            st.html(neon_stat_card(
+                "BTC EQUITY",
+                f"${btc_realized:,.2f}",
+                f"{fmt_usd(btc_total_pnl)} ({btc_roi:+.1f}% ROI)",
+                pnl_color(btc_total_pnl),
+            ))
+
+        with b2:
+            st.html(neon_stat_card(
+                "TODAY P&L",
+                fmt_usd(btc_daily_pnl),
+                f"from ${btc_day_start:,.2f}",
+                pnl_color(btc_daily_pnl),
+            ))
+
+        with b3:
+            st.html(neon_stat_card(
+                "WIN RATE",
+                f"{btc_win_rate:.1f}%",
+                f"{btc_total_trades} trades ({btc_wins}W/{len(btc_history) - btc_wins}L)",
+                "c-amber" if btc_win_rate >= 50 else "c-red",
+            ))
+
+        with b4:
+            st.html(neon_stat_card(
+                "OPEN",
+                f"{len(btc_open)}",
+                f"${btc_open_cost:,.2f} exposed",
+                "c-white",
+            ))
+
+        st.html('<div class="sep"></div>')
+
+        # --- Equity Curve ---
+        if btc_bankroll_hist:
+            st.html('<div class="section-hdr">// BTC EQUITY CURVE</div>')
+            btc_eq = pd.DataFrame(btc_bankroll_hist)
+            btc_eq["timestamp"] = pd.to_datetime(btc_eq["timestamp"])
+            btc_eq = btc_eq.sort_values("timestamp")
+
+            fig_btc = go.Figure()
+            fig_btc.add_trace(go.Scatter(
+                x=btc_eq["timestamp"],
+                y=btc_eq["bankroll"],
+                mode="lines",
+                line=dict(color="#f7931a", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(247,147,26,0.08)",
+                hovertemplate="$%{y:,.2f}<br>%{x|%b %d %H:%M}<extra></extra>",
+            ))
+
+            if btc_history:
+                for trade in btc_history[-30:]:
+                    closed_at = trade.get("closed_at", "")
+                    pnl_val = trade.get("pnl", 0) or 0
+                    if not closed_at:
+                        continue
+                    try:
+                        trade_time = pd.to_datetime(closed_at)
+                    except Exception:
+                        continue
+                    idx = btc_eq["timestamp"].searchsorted(trade_time)
+                    if idx >= len(btc_eq):
+                        idx = len(btc_eq) - 1
+                    bankroll_at = btc_eq.iloc[idx]["bankroll"]
+                    marker_color = "#00ff41" if pnl_val >= 0 else "#ff0044"
+                    fig_btc.add_trace(go.Scatter(
+                        x=[trade_time],
+                        y=[bankroll_at],
+                        mode="markers",
+                        marker=dict(color=marker_color, size=7, symbol="diamond",
+                                    line=dict(width=1, color=marker_color)),
+                        hovertemplate=f"P&L: {fmt_usd(pnl_val)}<extra></extra>",
+                        showlegend=False,
+                    ))
+
+            fig_btc.update_layout(
+                **plotly_theme(),
+                height=220,
+                showlegend=False,
+                yaxis_tickprefix="$",
+            )
+            st.plotly_chart(fig_btc, width="stretch", config={"displayModeBar": False})
+
+        st.html('<div class="sep"></div>')
+
+        # --- Open Positions ---
+        if btc_open:
+            st.html('<div class="section-hdr">// OPEN POSITIONS</div>')
+            rows = ""
+            for pid, pos in btc_open.items():
+                side = pos.get("side", "?")
+                q = html_esc(pos.get("question", "?")[:50])
+                entry = pos.get("entry_price", 0)
+                shares = pos.get("size", 0)
+                cost = pos.get("cost_basis", 0)
+                max_pnl = shares - cost
+                end_dt = pos.get("end_date", "")
+                time_left = fmt_end_window(end_dt) if end_dt else "—"
+                side_badge = (
+                    '<span style="color:#00ff41;font-weight:bold">UP</span>'
+                    if "yes" in side.lower() or "up" in side.lower()
+                    else '<span style="color:#ff0044;font-weight:bold">DOWN</span>'
+                )
+                rows += (
+                    f'<tr>'
+                    f'<td style="color:#ccc">{q}</td>'
+                    f'<td>{side_badge}</td>'
+                    f'<td>${entry:.2f}</td>'
+                    f'<td>{shares:.1f}</td>'
+                    f'<td>${cost:.2f}</td>'
+                    f'<td class="{pnl_color(max_pnl)}">{fmt_usd(max_pnl)}</td>'
+                    f'<td style="color:#00ff4160">{time_left}</td>'
+                    f'</tr>'
+                )
+
+            st.html(
+                '<div class="data-table-wrap"><table class="data-table">'
+                '<tr><th>MARKET</th><th>SIDE</th><th>ENTRY</th><th>SHARES</th>'
+                '<th>COST</th><th>MAX P&L</th><th>ENDS</th></tr>'
+                + rows + '</table></div>'
+            )
+        else:
+            st.html(
+                '<div style="color:#00ff4140;font-size:0.7rem;padding:15px 0;text-align:center">'
+                '// NO OPEN BTC POSITIONS</div>'
+            )
+
+        # --- Trade History ---
+        if btc_history:
+            st.html('<div class="section-hdr">// TRADE HISTORY</div>')
+            rows = ""
+            for trade in reversed(btc_history[-50:]):
+                pnl_val = trade.get("pnl", 0) or 0
+                exit_p = trade.get("exit_price")
+                if exit_p is not None and 0.01 < exit_p < 0.99:
+                    badge = f'<span class="badge badge-amber">@{exit_p:.2f}</span>'
+                elif pnl_val > 0:
+                    badge = '<span class="badge badge-green">WIN</span>'
+                else:
+                    badge = '<span class="badge badge-red">LOSS</span>'
+
+                q = html_esc(trade.get("question", "?")[:45])
+                entry = trade.get("entry_price", 0)
+                exit_v = exit_p if exit_p is not None else 0
+                closed = trade.get("closed_at", "")
+                try:
+                    closed_fmt = parse_iso(closed).strftime("%m/%d %H:%M") if closed else "—"
+                except Exception:
+                    closed_fmt = "—"
+
+                rows += (
+                    f'<tr>'
+                    f'<td>{badge}</td>'
+                    f'<td style="color:#ccc">{q}</td>'
+                    f'<td>${entry:.2f}</td>'
+                    f'<td>${exit_v:.2f}</td>'
+                    f'<td class="{pnl_color(pnl_val)}">{fmt_usd(pnl_val)}</td>'
+                    f'<td style="color:#00ff4160">{closed_fmt}</td>'
+                    f'</tr>'
+                )
+
+            st.html(
+                '<div class="data-table-wrap"><table class="data-table">'
+                '<tr><th></th><th>MARKET</th><th>ENTRY</th><th>EXIT</th>'
+                '<th>P&L</th><th>CLOSED</th></tr>'
+                + rows + '</table></div>'
+            )
+
+        # --- P&L Distribution ---
+        if btc_history:
+            st.html('<div class="section-hdr">// P&L DISTRIBUTION</div>')
+            pnls = [t.get("pnl", 0) or 0 for t in btc_history]
+            fig_pnl = go.Figure()
+            colors = ["#00ff41" if p >= 0 else "#ff0044" for p in pnls]
+            fig_pnl.add_trace(go.Bar(
+                x=list(range(1, len(pnls) + 1)),
+                y=pnls,
+                marker_color=colors,
+                hovertemplate="Trade %{x}<br>P&L: $%{y:,.2f}<extra></extra>",
+            ))
+            fig_pnl.update_layout(
+                **plotly_theme(),
+                height=180,
+                showlegend=False,
+                yaxis_tickprefix="$",
+                xaxis_title="Trade #",
+            )
+            st.plotly_chart(fig_pnl, width="stretch", config={"displayModeBar": False})
 
 # ---------------------------------------------------------------------------
 # Footer
