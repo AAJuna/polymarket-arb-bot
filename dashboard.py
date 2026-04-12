@@ -652,59 +652,53 @@ with tab_overview:
     with bot_left:
         st.html('<div class="section-hdr">// RISK STATUS</div>')
 
-        dl_ratio = min(daily_loss / limit_pct, 1.0) if limit_pct > 0 else 0.0
-        dl_color = C_DANGER if daily_loss >= limit_pct * 0.8 else (C_WARNING if daily_loss >= limit_pct * 0.5 else C_PRIMARY)
-        st.html(f'''
-        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{dl_color};margin-bottom:4px;">
-          <span>DAILY LOSS</span><span>{daily_loss:.1f}% / {limit_pct:.0f}%</span>
-        </div>
-        <div style="height:4px;background:#00ff4115;border-radius:2px;overflow:hidden;margin-bottom:12px;">
-          <div style="width:{dl_ratio*100:.0f}%;height:100%;background:{dl_color};box-shadow:0 0 6px {dl_color};border-radius:2px;"></div>
-        </div>''')
-
+        # --- All-time metrics (primary display) ---
         dd_stop = config.DRAWDOWN_STOP_THRESHOLD * 100
-        dd_ratio = min(dd / dd_stop, 1.0) if dd_stop > 0 else 0.0
-        dd_color = C_DANGER if dd >= config.DRAWDOWN_REDUCE_THRESHOLD * 100 else (C_WARNING if dd >= dd_stop * 0.5 else C_PRIMARY)
+        pause_at = config.CONSECUTIVE_LOSS_PAUSE
+        loss_pct = (total_lost / starting * 100) if starting > 0 else 0.0
+
+        mdd_ratio = min(max_drawdown_pct / dd_stop, 1.0) if dd_stop > 0 else 0.0
+        mdd_color = C_DANGER if max_drawdown_pct >= dd_stop * 0.8 else (C_WARNING if max_drawdown_pct >= dd_stop * 0.5 else C_PRIMARY)
         st.html(f'''
-        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{dd_color};margin-bottom:4px;">
-          <span>DRAWDOWN</span><span>{dd:.1f}% / {dd_stop:.0f}%</span>
+        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{mdd_color};margin-bottom:4px;">
+          <span>MAX DRAWDOWN</span><span>{max_drawdown_pct:.1f}% / {dd_stop:.0f}%</span>
         </div>
         <div style="height:4px;background:#ffaa0015;border-radius:2px;overflow:hidden;margin-bottom:12px;">
-          <div style="width:{dd_ratio*100:.0f}%;height:100%;background:{dd_color};box-shadow:0 0 6px {dd_color};border-radius:2px;"></div>
+          <div style="width:{mdd_ratio*100:.0f}%;height:100%;background:{mdd_color};box-shadow:0 0 6px {mdd_color};border-radius:2px;"></div>
         </div>''')
 
-        pause_at = config.CONSECUTIVE_LOSS_PAUSE
-        cl_ratio = min(cons_losses / pause_at, 1.0) if pause_at > 0 else 0.0
-        cl_color = C_DANGER if cons_losses >= pause_at * 0.7 else C_PRIMARY
+        mls_ratio = min(max_loss_streak / pause_at, 1.0) if pause_at > 0 else 0.0
+        mls_color = C_DANGER if max_loss_streak >= pause_at * 0.7 else (C_WARNING if max_loss_streak >= pause_at * 0.4 else C_PRIMARY)
         st.html(f'''
-        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{cl_color};margin-bottom:4px;">
-          <span>LOSS STREAK</span><span>{cons_losses} / {pause_at}</span>
+        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{mls_color};margin-bottom:4px;">
+          <span>MAX LOSS STREAK</span><span>{max_loss_streak} / {pause_at}</span>
         </div>
-        <div style="height:4px;background:#00ff4115;border-radius:2px;overflow:hidden;">
-          <div style="width:{cl_ratio*100:.0f}%;height:100%;background:{cl_color};box-shadow:0 0 6px {cl_color};border-radius:2px;"></div>
+        <div style="height:4px;background:#00ff4115;border-radius:2px;overflow:hidden;margin-bottom:12px;">
+          <div style="width:{mls_ratio*100:.0f}%;height:100%;background:{mls_color};box-shadow:0 0 6px {mls_color};border-radius:2px;"></div>
         </div>''')
 
-        # Historical metrics
-        if history:
-            mdd_color = C_DANGER if max_drawdown_pct >= 20 else (C_WARNING if max_drawdown_pct >= 10 else "#555")
-            mls_color = C_DANGER if max_loss_streak >= 7 else (C_WARNING if max_loss_streak >= 4 else "#555")
-            tl_color = C_DANGER if total_lost >= starting * 0.2 else "#555"
-            st.html(f'''
-            <div style="margin-top:14px;padding-top:10px;border-top:1px solid #00ff4115;">
-              <div style="color:{C_PRIMARY};font-size:0.55rem;margin-bottom:8px;letter-spacing:1px;">ALL-TIME</div>
-              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{mdd_color};margin-bottom:6px;">
-                <span>MAX DRAWDOWN</span><span>{max_drawdown_pct:.1f}%</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{mls_color};margin-bottom:6px;">
-                <span>MAX LOSS STREAK</span><span>{max_loss_streak}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{tl_color};margin-bottom:6px;">
-                <span>TOTAL LOST</span><span>${total_lost:.2f}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:#555;">
-                <span>WIN RATE</span><span>{win_rate:.0f}% ({winning}W / {total_trades - winning}L)</span>
-              </div>
-            </div>''')
+        tl_color = C_DANGER if total_lost >= starting * 0.3 else (C_WARNING if total_lost >= starting * 0.15 else C_PRIMARY)
+        st.html(f'''
+        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:{tl_color};margin-bottom:4px;">
+          <span>TOTAL LOST</span><span>${total_lost:.2f} ({loss_pct:.1f}%)</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.6rem;color:#555;margin-bottom:4px;">
+          <span>WIN RATE</span><span>{win_rate:.0f}% ({winning}W / {total_trades - winning}L)</span>
+        </div>''')
+
+        # --- Live circuit-breaker status (compact) ---
+        dl_color = C_DANGER if daily_loss >= limit_pct * 0.8 else (C_WARNING if daily_loss >= limit_pct * 0.5 else "#555")
+        dd_live_color = C_DANGER if dd >= dd_stop * 0.8 else "#555"
+        cl_live_color = C_DANGER if cons_losses >= pause_at * 0.7 else "#555"
+        st.html(f'''
+        <div style="margin-top:10px;padding-top:8px;border-top:1px solid #00ff4115;">
+          <div style="color:{C_PRIMARY};font-size:0.5rem;margin-bottom:6px;letter-spacing:1px;">LIVE CIRCUIT BREAKERS</div>
+          <div style="display:flex;gap:12px;font-size:0.55rem;">
+            <span style="color:{dl_color};">DL {daily_loss:.1f}%</span>
+            <span style="color:{dd_live_color};">DD {dd:.1f}%</span>
+            <span style="color:{cl_live_color};">LS {cons_losses}/{pause_at}</span>
+          </div>
+        </div>''')
 
     with bot_right:
         st.html('<div class="section-hdr">// RECENT TRADES</div>')
