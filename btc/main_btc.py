@@ -116,6 +116,10 @@ def run() -> None:
     portfolio_module.TRADE_LEDGER_FILE = data_dir / "trade_ledger.jsonl"
     portfolio_module.STRATEGY_REPORT_FILE = data_dir / "strategy_expectancy.json"
 
+    # Patch shared config so Executor/RiskManager use BTC settings
+    import config as shared_config
+    shared_config.PAPER_TRADING = cfg.PAPER_TRADING
+
     from portfolio import Portfolio
     from executor import Executor
     from risk_manager import RiskManager
@@ -123,7 +127,7 @@ def run() -> None:
     port = Portfolio(starting_bankroll=cfg.MAX_POSITION_SIZE)
     port.load()
 
-    executor = Executor(paper=cfg.PAPER_TRADING)
+    executor = Executor()
     risk_mgr = RiskManager()
 
     # Start feeds
