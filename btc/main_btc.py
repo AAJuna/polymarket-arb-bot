@@ -265,25 +265,19 @@ def run() -> None:
             elif state == State.WAITING:
                 now = datetime.now(timezone.utc)
                 if now >= current_market.window_start:
-                    # Capture strike price
-                    strike = rtds.get_btc_price()
-                    if strike:
-                        duration = (
-                            current_market.window_end - current_market.window_start
-                        ).total_seconds()
-                        engine.set_window(strike, current_market.window_start, duration)
-                        state = State.OBSERVING
-                        logger.info(
-                            f"Window OPEN: strike=${strike:,.2f}  "
-                            f"Up={current_market.up_price:.2f}  "
-                            f"Down={current_market.down_price:.2f}"
-                        )
-                    else:
-                        logger.warning("No BTC price at window start -- skipping")
-                        engine.reset()
-                        current_market = None
-                        scanner.invalidate_cache()
-                        state = State.IDLE
+                    # Capture approximate strike (best effort — model uses
+                    # market prices as baseline, not this value)
+                    strike = rtds.get_btc_price() or 0.0
+                    duration = (
+                        current_market.window_end - current_market.window_start
+                    ).total_seconds()
+                    engine.set_window(strike, current_market.window_start, duration)
+                    state = State.OBSERVING
+                    logger.info(
+                        f"Window OPEN: BTC=${strike:,.2f}  "
+                        f"Up={current_market.up_price:.2f}  "
+                        f"Down={current_market.down_price:.2f}"
+                    )
                 _sleep(0.5, running)
 
             # ============================================================

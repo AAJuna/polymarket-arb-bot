@@ -2,11 +2,14 @@
 BTC 5-minute signal engine.
 
 Three-layer probability model:
-  1. Statistical (Gaussian) — P(BTC > strike at expiry) given current price and vol
-  2. Momentum — short-term price trend adjustment
-  3. Order flow — Polymarket order book imbalance
+  1. Market-implied baseline — Polymarket's own Up/Down pricing
+  2. Momentum — short-term BTC price trend (primary edge source)
+  3. Statistical — Gaussian model when strike is available
 
-Outputs a BtcSignal with side (UP/DOWN), model probability, edge vs market price.
+The key insight: we can't reliably capture Polymarket's exact strike
+(set by Chainlink at the precise window start). Instead, we use the
+market's own pricing as the baseline and look for momentum divergence
+as our edge signal.
 """
 
 from __future__ import annotations
@@ -79,7 +82,7 @@ class SignalEngine:
 
     @property
     def is_ready(self) -> bool:
-        return self._strike_price is not None and self._window_start is not None
+        return self._window_start is not None
 
     def get_signal(
         self,
@@ -97,7 +100,6 @@ class SignalEngine:
         if btc_price is None:
             return None
 
-        strike = self._strike_price
         now = datetime.now(timezone.utc)
         elapsed = (now - self._window_start).total_seconds()
         time_remaining = max(0.0, self._window_end_sec - elapsed)
@@ -105,23 +107,30 @@ class SignalEngine:
         if time_remaining <= 0:
             return None
 
-        # Layer 1: Statistical probability
         vol = self._compute_volatility()
-        stat_p_up = self._statistical_probability(btc_price, strike, time_remaining, vol)
 
-        # Layer 2: Momentum adjustment
+        # Layer 1: Market-implied baseline
+        # The market's own pricing is our starting point — it already
+        # reflects the true strike from Chainlink.
+        market_p_up = up_price / (up_price + down_price) if (up_price + down_price) > 0 else 0.5
+
+        # Layer 2: Momentum (primary edge source)
+        # If BTC is trending strongly and the market hasn't adjusted yet,
+        # we have edge.
         momentum_adj = self._momentum_adjustment(vol)
 
-        # Layer 3: Order flow (from market prices as proxy)
-        orderflow_adj = self._orderflow_adjustment(up_price, down_price, stat_p_up)
+        # Layer 3: Statistical (secondary, only if strike available)
+        stat_adj = 0.0
+        stat_p_up = market_p_up
+        if self._strike_price and self._strike_price > 0:
+            stat_p_up = self._statistical_probability(
+                btc_price, self._strike_price, time_remaining, vol
+            )
+            # Use deviation from market as an adjustment, not absolute value
+            stat_adj = (stat_p_up - market_p_up) * 0.3  # dampen by 70%
 
-        # Weighted combination
-        p_up = (
-            cfg.STATISTICAL_WEIGHT * stat_p_up
-            + cfg.MOMENTUM_WEIGHT * (stat_p_up + momentum_adj)
-            + cfg.ORDERFLOW_WEIGHT * (stat_p_up + orderflow_adj)
-        )
-        # Clamp to [0.01, 0.99]
+        # Combined model: start from market baseline, add momentum + stat adjustment
+        p_up = market_p_up + momentum_adj + stat_adj
         p_up = max(0.01, min(0.99, p_up))
         p_down = 1.0 - p_up
 
@@ -140,9 +149,9 @@ class SignalEngine:
             market_price = down_price
             edge_pct = down_edge
 
-        # Confidence based on data quality and layer agreement
+        # Confidence
         confidence = self._compute_confidence(
-            stat_p_up, momentum_adj, orderflow_adj, time_remaining, vol
+            momentum_adj, stat_adj, time_remaining, vol
         )
 
         return BtcSignal(
@@ -154,45 +163,23 @@ class SignalEngine:
             volatility=vol,
             time_remaining_sec=time_remaining,
             btc_price=btc_price,
-            strike_price=strike,
+            strike_price=self._strike_price or 0.0,
             statistical_prob=stat_p_up,
             momentum_adj=momentum_adj,
-            orderflow_adj=orderflow_adj,
+            orderflow_adj=stat_adj,
         )
 
     # ------------------------------------------------------------------
-    # Layer 1: Statistical (Gaussian)
-    # ------------------------------------------------------------------
-
-    def _statistical_probability(
-        self,
-        current_price: float,
-        strike: float,
-        time_remaining_sec: float,
-        vol_annual: float,
-    ) -> float:
-        """P(BTC >= strike at expiry) using Gaussian model."""
-        if current_price <= 0 or strike <= 0:
-            return 0.5
-        if time_remaining_sec <= 0:
-            return 1.0 if current_price >= strike else 0.0
-
-        time_remaining_min = time_remaining_sec / 60.0
-        sigma_t = vol_annual * math.sqrt(time_remaining_min / MINUTES_PER_YEAR)
-
-        if sigma_t < 1e-10:
-            return 1.0 if current_price >= strike else 0.0
-
-        # d = ln(S/K) / sigma_T  (zero drift over 5 minutes)
-        d = math.log(current_price / strike) / sigma_t
-        return _normal_cdf(d)
-
-    # ------------------------------------------------------------------
-    # Layer 2: Momentum
+    # Layer 2: Momentum (primary edge)
     # ------------------------------------------------------------------
 
     def _momentum_adjustment(self, vol_annual: float) -> float:
-        """Short-term momentum signal from recent price movement."""
+        """Short-term momentum signal from recent price movement.
+
+        This is the primary edge source: if BTC is trending strongly
+        in the last 30-60 seconds, the market price likely hasn't
+        fully adjusted yet.
+        """
         history = self._rtds.get_price_history(seconds=60)
         if len(history) < 10:
             return 0.0
@@ -224,33 +211,34 @@ class SignalEngine:
             z = 0.0
 
         # Map z-score to probability adjustment, capped
-        adj = z * 0.02  # 2% per 1 sigma of momentum
+        adj = z * 0.03  # 3% per 1 sigma of momentum
         return max(-cfg.MOMENTUM_CAP, min(cfg.MOMENTUM_CAP, adj))
 
     # ------------------------------------------------------------------
-    # Layer 3: Order flow
+    # Layer 3: Statistical (Gaussian)
     # ------------------------------------------------------------------
 
-    def _orderflow_adjustment(
-        self, up_price: float, down_price: float, stat_p_up: float
+    def _statistical_probability(
+        self,
+        current_price: float,
+        strike: float,
+        time_remaining_sec: float,
+        vol_annual: float,
     ) -> float:
-        """Order flow signal from Polymarket Up/Down market prices.
+        """P(BTC >= strike at expiry) using Gaussian model."""
+        if current_price <= 0 or strike <= 0:
+            return 0.5
+        if time_remaining_sec <= 0:
+            return 1.0 if current_price >= strike else 0.0
 
-        If the market strongly disagrees with the statistical model,
-        apply a small adjustment toward the market consensus.
-        """
-        if up_price <= 0 or down_price <= 0:
-            return 0.0
+        time_remaining_min = time_remaining_sec / 60.0
+        sigma_t = vol_annual * math.sqrt(time_remaining_min / MINUTES_PER_YEAR)
 
-        # Market-implied P(Up)
-        market_p_up = up_price / (up_price + down_price)
+        if sigma_t < 1e-10:
+            return 1.0 if current_price >= strike else 0.0
 
-        # Divergence between model and market
-        divergence = market_p_up - stat_p_up
-
-        # Small adjustment toward market consensus (contrarian is risky)
-        adj = divergence * 0.3  # 30% of the divergence as adjustment
-        return max(-cfg.MOMENTUM_CAP, min(cfg.MOMENTUM_CAP, adj))
+        d = math.log(current_price / strike) / sigma_t
+        return _normal_cdf(d)
 
     # ------------------------------------------------------------------
     # Volatility
@@ -325,30 +313,30 @@ class SignalEngine:
 
     def _compute_confidence(
         self,
-        stat_p_up: float,
         momentum_adj: float,
-        orderflow_adj: float,
+        stat_adj: float,
         time_remaining_sec: float,
         vol: float,
     ) -> float:
-        """Confidence score 0-1 based on data quality and layer agreement."""
+        """Confidence score 0-1 based on data quality and signal strength."""
         score = 1.0
 
         # Penalize if volatility is at default (insufficient data)
         if abs(vol - cfg.VOLATILITY_DEFAULT) < 0.01:
             score *= 0.6
 
-        # Penalize if layers disagree in direction
-        if momentum_adj != 0 and orderflow_adj != 0:
-            if (momentum_adj > 0) != (orderflow_adj > 0):
-                score *= 0.8
+        # Penalize if momentum is near zero (no directional signal)
+        if abs(momentum_adj) < 0.005:
+            score *= 0.5
 
-        # Penalize near the 50/50 zone (low conviction)
-        distance_from_50 = abs(stat_p_up - 0.5)
-        if distance_from_50 < 0.05:
-            score *= 0.7
+        # Boost if momentum and stat agree in direction
+        if momentum_adj != 0 and stat_adj != 0:
+            if (momentum_adj > 0) == (stat_adj > 0):
+                score *= 1.2
+            else:
+                score *= 0.7
 
-        # Penalize very little time remaining (high uncertainty)
+        # Penalize very little time remaining
         if time_remaining_sec < 60:
             score *= 0.7
         elif time_remaining_sec < 120:
