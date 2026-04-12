@@ -594,7 +594,6 @@ with tab_overview:
         st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO EQUITY DATA YET — SNAPSHOTS RECORDED EACH SAVE CYCLE</div>',
-            unsafe_allow_html=True,
         )
 
     st.html('<div class="sep"></div>')
@@ -665,7 +664,6 @@ with tab_overview:
         else:
             st.html(
                 '<div style="color:#00ff4140;font-size:0.65rem;padding:12px 0">// NO CLOSED TRADES YET</div>',
-                unsafe_allow_html=True,
             )
 
 # ---------------------------------------------------------------------------
@@ -733,7 +731,6 @@ with tab_positions:
         st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO OPEN POSITIONS</div>',
-            unsafe_allow_html=True,
         )
 
     st.html('<div class="sep"></div>')
@@ -809,7 +806,6 @@ with tab_positions:
         st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO CLOSED TRADES YET</div>',
-            unsafe_allow_html=True,
         )
 
     st.html('<div class="sep"></div>')
@@ -852,7 +848,6 @@ with tab_positions:
         st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO TRADE DATA</div>',
-            unsafe_allow_html=True,
         )
 
 # ---------------------------------------------------------------------------
@@ -968,7 +963,6 @@ with tab_analytics:
         st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO STRATEGY DATA YET</div>',
-            unsafe_allow_html=True,
         )
 
     st.html('<div class="sep"></div>')
@@ -1020,7 +1014,6 @@ with tab_analytics:
         st.html(
             '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
             '// NO SHADOW DATA</div>',
-            unsafe_allow_html=True,
         )
 
     if shadow_recent:
@@ -1081,7 +1074,6 @@ with tab_analytics:
             st.html(
                 '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
                 '// NO AI DATA</div>',
-                unsafe_allow_html=True,
             )
 
     with col_feed:
@@ -1114,7 +1106,6 @@ with tab_analytics:
             st.html(
                 '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
                 '// FEED OFFLINE</div>',
-                unsafe_allow_html=True,
             )
 
 # ---------------------------------------------------------------------------
@@ -1267,7 +1258,6 @@ with tab_risk:
             + _detail_row("LIMIT", f"{dl_max:.1f}%")
             + _detail_row("HEADROOM", f"{headroom_pct:.2f}%")
             + '</div>',
-            unsafe_allow_html=True,
         )
 
     with d2:
@@ -1278,7 +1268,6 @@ with tab_risk:
             + _detail_row("HALVE BETS AT", f"{config.DRAWDOWN_REDUCE_THRESHOLD * 100:.1f}%")
             + _detail_row("STOP AT", f"{config.DRAWDOWN_STOP_THRESHOLD * 100:.1f}%")
             + '</div>',
-            unsafe_allow_html=True,
         )
 
     with d3:
@@ -1289,7 +1278,6 @@ with tab_risk:
             + _detail_row("HALVE BETS AT", f"{config.CONSECUTIVE_LOSS_REDUCE} losses")
             + _detail_row("PAUSE AT", f"{config.CONSECUTIVE_LOSS_PAUSE} losses")
             + '</div>',
-            unsafe_allow_html=True,
         )
 
 # ---------------------------------------------------------------------------
@@ -1328,7 +1316,6 @@ with tab_config:
             + cfg_row("Min Price", f"{config.ODDS_COMPARISON_MIN_PRICE:.2f}")
             + cfg_row("Min Bookmakers", str(config.MIN_BOOKMAKER_COUNT))
             + '</div>',
-            unsafe_allow_html=True,
         )
 
     with cc2:
@@ -1342,7 +1329,6 @@ with tab_config:
             + cfg_row("Consec. Loss Pause", str(config.CONSECUTIVE_LOSS_PAUSE))
             + cfg_row("Pause Duration (min)", str(config.PAUSE_DURATION_MINUTES))
             + '</div>',
-            unsafe_allow_html=True,
         )
 
     with cc3:
@@ -1362,7 +1348,6 @@ with tab_config:
             + cfg_row("Max Spread", f"{config.REALTIME_GATE_MAX_SPREAD:.4f}")
             + cfg_row("Min Depth ($)", f"${config.REALTIME_GATE_MIN_DEPTH_USD:,.0f}")
             + '</div>',
-            unsafe_allow_html=True,
         )
 
 # ---------------------------------------------------------------------------
@@ -1371,7 +1356,6 @@ with tab_config:
 
 st.html(
     f'<div class="footer">MeQ0L15 · POLYMARKET WAR MACHINE · AUTO-REFRESH {REFRESH_SECONDS}s · {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>',
-    unsafe_allow_html=True,
 )
 
 time.sleep(REFRESH_SECONDS)
