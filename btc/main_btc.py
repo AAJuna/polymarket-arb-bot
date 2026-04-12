@@ -9,6 +9,7 @@ Run: python -m btc.main_btc
 
 from __future__ import annotations
 
+import json
 import signal
 import sys
 import time
@@ -84,6 +85,70 @@ def _build_opportunity(signal: BtcSignal, market: BtcMarket) -> BtcOpportunity:
             "neg_risk": market.neg_risk,
         },
     )
+
+
+SIGNAL_STATUS_FILE = Path("data/btc/signal_status.json")
+
+
+def _write_signal_status(
+    state: State,
+    rtds: "RtdsFeed",
+    engine: "SignalEngine",
+    market: Optional[BtcMarket] = None,
+    sig: Optional[BtcSignal] = None,
+    position_id: Optional[str] = None,
+) -> None:
+    """Write current signal engine state to JSON for dashboard consumption."""
+    now = datetime.now(timezone.utc)
+    btc_price = rtds.get_btc_price()
+
+    status: dict = {
+        "updated_at": now.isoformat(),
+        "state": state.name,
+        "btc_price": btc_price,
+        "rtds_connected": rtds.is_connected,
+        "rtds_msgs": rtds._message_count,
+    }
+
+    if market:
+        time_remaining = max(0, (market.window_end - now).total_seconds())
+        status["market"] = {
+            "question": market.question,
+            "window_start": market.window_start.isoformat(),
+            "window_end": market.window_end.isoformat(),
+            "time_remaining_sec": round(time_remaining),
+            "up_price": market.up_price,
+            "down_price": market.down_price,
+        }
+
+    if engine.is_ready:
+        status["strike_price"] = engine._strike_price
+
+    if sig:
+        status["signal"] = {
+            "side": sig.side,
+            "model_probability": round(sig.model_probability, 4),
+            "market_price": round(sig.market_price, 4),
+            "edge_pct": round(sig.edge_pct, 2),
+            "confidence": round(sig.confidence, 3),
+            "volatility": round(sig.volatility, 4),
+            "time_remaining_sec": round(sig.time_remaining_sec),
+            "statistical_prob": round(sig.statistical_prob, 4),
+            "momentum_adj": round(sig.momentum_adj, 4),
+            "orderflow_adj": round(sig.orderflow_adj, 4),
+        }
+
+    if position_id:
+        status["position_id"] = position_id
+
+    try:
+        SIGNAL_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SIGNAL_STATUS_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(status, f, indent=2)
+        tmp.replace(SIGNAL_STATUS_FILE)
+    except Exception:
+        pass
 
 
 def run() -> None:
@@ -182,6 +247,7 @@ def run() -> None:
                         f"start={market.window_start.strftime('%H:%M:%S')}  "
                         f"end={market.window_end.strftime('%H:%M:%S')}"
                     )
+                _write_signal_status(state, rtds, engine, current_market)
                 _sleep(cfg.POLL_INTERVAL_IDLE, running)
 
             # ============================================================
@@ -233,6 +299,7 @@ def run() -> None:
                 sig = engine.get_signal(
                     current_market.up_price, current_market.down_price
                 )
+                _write_signal_status(state, rtds, engine, current_market, sig)
 
                 if sig and sig.edge_pct >= cfg.MIN_EDGE_PCT and sig.confidence >= cfg.MIN_CONFIDENCE:
                     # Risk check
@@ -288,6 +355,8 @@ def run() -> None:
                             f"strike=${strike:,.2f}  direction={direction}  "
                             f"remaining={time_remaining:.0f}s"
                         )
+
+                _write_signal_status(state, rtds, engine, current_market, position_id=current_position_id)
 
                 if time_remaining <= 0:
                     state = State.RESOLVING

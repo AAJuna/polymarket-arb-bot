@@ -27,6 +27,7 @@ SHADOW_REPORT_FILE = Path("data/shadow_report.json")
 STRATEGY_REPORT_FILE = Path("data/strategy_expectancy.json")
 REALTIME_FEED_STATUS_FILE = Path("data/realtime_feed_status.json")
 BTC_PORTFOLIO_FILE = Path("data/btc/portfolio.json")
+BTC_SIGNAL_FILE = Path("data/btc/signal_status.json")
 REFRESH_SECONDS = 10
 
 # ---------------------------------------------------------------------------
@@ -443,6 +444,7 @@ strategy_report = load_json(STRATEGY_REPORT_FILE)
 ai_stats = load_json(AI_STATS_FILE)
 feed_status = load_json(REALTIME_FEED_STATUS_FILE)
 btc_data = load_json(BTC_PORTFOLIO_FILE)
+btc_signal = load_json(BTC_SIGNAL_FILE)
 
 # ---------------------------------------------------------------------------
 # Header
@@ -1470,13 +1472,122 @@ with tab_config:
 # ---------------------------------------------------------------------------
 
 with tab_btc:
-    if not btc_data:
+    # --- Live Signal Panel ---
+    if btc_signal:
+        sig_state = btc_signal.get("state", "UNKNOWN")
+        sig_btc = btc_signal.get("btc_price")
+        sig_strike = btc_signal.get("strike_price")
+        sig_market = btc_signal.get("market", {})
+        sig_data = btc_signal.get("signal", {})
+        sig_connected = btc_signal.get("rtds_connected", False)
+
+        # State badge
+        state_colors = {
+            "IDLE": ("pill-yellow", "SCANNING"),
+            "WAITING": ("pill-yellow", "WAITING FOR WINDOW"),
+            "OBSERVING": ("pill-green", "OBSERVING"),
+            "TRADING": ("pill-green", "POSITION OPEN"),
+            "RESOLVING": ("pill-yellow", "RESOLVING"),
+        }
+        pill_cls, pill_label = state_colors.get(sig_state, ("pill-red", sig_state))
+        conn_icon = "RTDS OK" if sig_connected else "RTDS DOWN"
+        st.html(
+            f'<div class="status-pill {pill_cls}">'
+            f'<span class="dot"></span>BTC BOT: {pill_label} — {conn_icon}'
+            f'</div>'
+        )
+
+        # Live price cards
+        lc1, lc2, lc3, lc4 = st.columns(4)
+        with lc1:
+            st.html(neon_stat_card(
+                "BTC PRICE",
+                f"${sig_btc:,.2f}" if sig_btc else "—",
+                f"RTDS msgs: {btc_signal.get('rtds_msgs', 0)}",
+                "c-amber",
+            ))
+        with lc2:
+            if sig_strike:
+                diff = sig_btc - sig_strike if sig_btc else 0
+                direction = "ABOVE" if diff >= 0 else "BELOW"
+                st.html(neon_stat_card(
+                    "STRIKE",
+                    f"${sig_strike:,.2f}",
+                    f"${abs(diff):,.2f} {direction}",
+                    "c-green" if diff >= 0 else "c-red",
+                ))
+            else:
+                st.html(neon_stat_card("STRIKE", "—", "waiting for window", "c-white"))
+        with lc3:
+            if sig_data:
+                edge = sig_data.get("edge_pct", 0)
+                side = sig_data.get("side", "—")
+                st.html(neon_stat_card(
+                    f"SIGNAL: {side}",
+                    f"{edge:+.1f}%",
+                    f"conf={sig_data.get('confidence', 0):.0%}  vol={sig_data.get('volatility', 0):.0%}",
+                    "c-green" if edge >= 3 else "c-amber" if edge > 0 else "c-red",
+                ))
+            else:
+                st.html(neon_stat_card("SIGNAL", "—", "no data yet", "c-white"))
+        with lc4:
+            remaining = sig_market.get("time_remaining_sec", 0)
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            q = sig_market.get("question", "—")[:35] if sig_market else "—"
+            st.html(neon_stat_card(
+                "WINDOW",
+                f"{mins}:{secs:02d}" if remaining > 0 else "—",
+                q,
+                "c-green" if remaining > 60 else "c-amber" if remaining > 0 else "c-white",
+            ))
+
+        # Signal detail table
+        if sig_data:
+            st.html('<div class="sep"></div>')
+            st.html('<div class="section-hdr">// SIGNAL ENGINE</div>')
+
+            p_up = sig_data.get("statistical_prob", 0.5)
+            p_down = 1.0 - p_up
+            mom = sig_data.get("momentum_adj", 0)
+            flow = sig_data.get("orderflow_adj", 0)
+            model_p = sig_data.get("model_probability", 0.5)
+            mkt_p = sig_data.get("market_price", 0.5)
+            up_mkt = sig_market.get("up_price", 0.5)
+            down_mkt = sig_market.get("down_price", 0.5)
+
+            st.html(
+                '<div class="data-table-wrap"><table class="data-table">'
+                '<tr><th>LAYER</th><th>VALUE</th><th>DESCRIPTION</th></tr>'
+                f'<tr><td style="color:#f7931a">Statistical</td>'
+                f'<td class="c-green">{p_up:.1%} UP / {p_down:.1%} DOWN</td>'
+                f'<td style="color:#00ff4160">Gaussian model (75% weight)</td></tr>'
+                f'<tr><td style="color:#f7931a">Momentum</td>'
+                f'<td class="{"c-green" if mom > 0 else "c-red" if mom < 0 else "c-white"}">{mom:+.2%}</td>'
+                f'<td style="color:#00ff4160">60s price slope (15% weight)</td></tr>'
+                f'<tr><td style="color:#f7931a">Order Flow</td>'
+                f'<td class="{"c-green" if flow > 0 else "c-red" if flow < 0 else "c-white"}">{flow:+.2%}</td>'
+                f'<td style="color:#00ff4160">Market consensus (10% weight)</td></tr>'
+                '<tr><td colspan="3" style="border-top:1px solid #00ff4120"></td></tr>'
+                f'<tr><td style="color:#fff">Model</td>'
+                f'<td class="c-green" style="font-weight:bold">{model_p:.1%}</td>'
+                f'<td style="color:#00ff4160">Combined P({sig_data.get("side","?")})</td></tr>'
+                f'<tr><td style="color:#fff">Market</td>'
+                f'<td class="c-amber">{mkt_p:.1%}</td>'
+                f'<td style="color:#00ff4160">Polymarket: Up={up_mkt:.2f} Down={down_mkt:.2f}</td></tr>'
+                '</table></div>'
+            )
+
+        st.html('<div class="sep"></div>')
+
+    elif not btc_data:
         st.html(
             '<div style="color:#00ff4140;font-size:0.8rem;padding:40px 0;text-align:center">'
             '// BTC BOT NOT ACTIVE — NO DATA YET<br>'
             '<span style="font-size:0.65rem">Start: python -m btc.main_btc</span></div>'
         )
-    else:
+
+    if btc_data:
         btc_bankroll = btc_data.get("current_bankroll", 0)
         btc_starting = btc_data.get("starting_bankroll", 0)
         btc_peak = btc_data.get("peak_bankroll", 0)
