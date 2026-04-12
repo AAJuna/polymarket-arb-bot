@@ -66,6 +66,7 @@ Structured JSON:
 - REJECT if: edge looks like noise, team name mismatch suspected, market too illiquid, obvious data artifact
 - PASS if: edge appears plausible given the data, worth deeper investigation
 - Bias toward PASS — better to let Sonnet reject than to miss a good trade
+- **Multi-sport support:** works for ALL sports (soccer, NBA, NFL, tennis, UFC, etc.), not just football. Adapt data evaluation to sport type — soccer has xG/form data from SportMonks, other sports rely on sportsbook odds consensus
 
 ### Model & Cost
 
@@ -169,6 +170,15 @@ for opp in filtered:
 ```
 
 **Logging:** When cache hit, log `"filter cache hit"` or `"deep cache hit"` so dashboard/logs show dedup is working. No API call = no cost increment.
+
+### Rejected Market Rotation
+
+Markets rejected by GPT-4o-mini filter get cached in `_filter_reject_cache` (60 min TTL). On each cycle, the main loop skips rejected markets and moves on to the next candidates in the ranked list. This naturally rotates through all available sports markets — soccer, NBA, NFL, tennis, UFC, cricket, etc.
+
+- If all soccer candidates are rejected, the bot automatically evaluates NBA, tennis, or other sports in the next slots
+- `AI_SCAN_LIMIT` controls how many candidates per cycle get sent to the filter — rejected ones don't count against this limit, so more markets get evaluated
+- Data availability adapts per sport: soccer gets full match analytics (xG, form, Poisson), other sports use sportsbook odds consensus as primary data source
+- The Sonnet deep analysis prompt adapts its evaluation criteria based on available data — it uses match model when present, sportsbook odds when that's all there is
 
 ### Main Loop Changes (`main.py`)
 
