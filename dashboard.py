@@ -1669,7 +1669,9 @@ with tab_btc:
                 marker_color=_colors,
                 hovertemplate="$%{y:,.2f}<extra></extra>",
             ))
-            _pfig.update_layout(**plotly_theme(), height=120, showlegend=False, yaxis_tickprefix="$", margin=dict(l=30, r=10, t=5, b=20))
+            _pnl_theme = plotly_theme()
+            _pnl_theme["margin"] = dict(l=30, r=10, t=5, b=20)
+            _pfig.update_layout(**_pnl_theme, height=120, showlegend=False, yaxis_tickprefix="$")
             st.plotly_chart(_pfig, width="stretch", config={"displayModeBar": False})
 
     # Remove old btc_data block below since we handled it above
