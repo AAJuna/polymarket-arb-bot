@@ -212,27 +212,31 @@ ODDS_MATCH_MIN_CONFIDENCE: float = float(os.getenv("ODDS_MATCH_MIN_CONFIDENCE", 
 TRADE_SIZE_TARGET_USD: float = float(os.getenv("TRADE_SIZE_TARGET_USD", "100.0"))
 
 
-def validate() -> list[str]:
-    """Return a list of missing/invalid configuration warnings."""
-    issues = []
+def validate() -> list[tuple[str, str]]:
+    """Return startup configuration messages as (level, message) tuples."""
+    issues: list[tuple[str, str]] = []
     if not PRIVATE_KEY or PRIVATE_KEY == "0x":
-        issues.append("POLYMARKET_PRIVATE_KEY is not set")
+        issues.append(("warning", "POLYMARKET_PRIVATE_KEY is not set"))
     if not ANTHROPIC_API_KEY or not ANTHROPIC_API_KEY.startswith("sk-"):
-        issues.append("ANTHROPIC_API_KEY is not set or looks invalid")
+        issues.append(("warning", "ANTHROPIC_API_KEY is not set or looks invalid"))
     if not ODDS_API_KEY:
-        issues.append("ODDS_API_KEY not set — odds comparison arbitrage will be disabled")
+        issues.append(("warning", "ODDS_API_KEY not set — odds comparison arbitrage will be disabled"))
     if PAPER_TRADING:
-        issues.append("PAPER_TRADING=true — no real orders will be placed")
+        issues.append(("info", "PAPER_TRADING=true — no real orders will be placed"))
     if RESET_STATE_ON_START:
-        issues.append("RESET_STATE_ON_START=true — persisted state will be cleared at startup")
+        issues.append(("warning", "RESET_STATE_ON_START=true — persisted state will be cleared at startup"))
     if ENABLE_SAME_MARKET_ARB and not ENABLE_SAME_MARKET_EXECUTION:
-        issues.append("same-market arb detection enabled but execution disabled until bundle execution is atomic")
+        issues.append((
+            "info",
+            "ENABLE_SAME_MARKET_ARB=true and ENABLE_SAME_MARKET_EXECUTION=false — same-market arb is detection-only until bundle execution is atomic",
+        ))
     if not PAPER_TRADING and AI_PAPER_MODE != "gate":
-        issues.append("AI_PAPER_MODE is ignored in live mode — AI remains a hard gate")
+        issues.append(("warning", "AI_PAPER_MODE is ignored in live mode — AI remains a hard gate"))
     if PAPER_TRADING and AI_PAPER_MODE == "advisory":
-        issues.append("AI_PAPER_MODE=advisory no longer bypasses low-confidence or side-mismatch AI denials")
+        issues.append(("warning", "AI_PAPER_MODE=advisory no longer bypasses low-confidence or side-mismatch AI denials"))
     if MATCH_ANALYTICS_ENABLED and not any((SPORTMONKS_API_KEY, API_FOOTBALL_API_KEY)):
-        issues.append(
-            "No football stats provider key set — advanced team analytics will use sportsbook-only fallback"
-        )
+        issues.append((
+            "warning",
+            "No football stats provider key set — advanced team analytics will use sportsbook-only fallback",
+        ))
     return issues

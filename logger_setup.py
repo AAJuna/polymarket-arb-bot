@@ -63,6 +63,10 @@ _MODULE_SHORT = {
     "realtime_feed": "ws",
     "shadow_tracker": "shadow",
     "risk_events": "journal",
+    "btc.main_btc": "btc",
+    "btc.rtds_feed": "rtds",
+    "btc.btc_scanner": "bscan",
+    "btc.signal_engine": "signal",
 }
 
 

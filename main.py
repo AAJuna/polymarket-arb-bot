@@ -51,9 +51,8 @@ def startup_checks(
     print("\033[1;36m" + "=" * 56 + "\033[0m")
     print()
 
-    issues = config.validate()
-    for issue in issues:
-        logger.warning(f"Config: {issue}")
+    for level, issue in config.validate():
+        getattr(logger, level, logger.warning)(f"Config: {issue}")
 
     if not config.PRIVATE_KEY and not config.PAPER_TRADING:
         logger.critical("No POLYMARKET_PRIVATE_KEY and PAPER_TRADING=false — cannot trade")
