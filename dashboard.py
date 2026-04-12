@@ -1531,15 +1531,23 @@ with tab_btc:
     _ai_dec = _bs.get("ai_decision", {})
     _ai_st = _bs.get("ai_stats", {})
     _console_lines = []
+    # Recent trade logs
+    _recent_trades = _bs.get("recent_trades", [])
+    for _rt in reversed(_recent_trades[-6:]):
+        _rt_pnl = _rt.get("pnl", 0)
+        _rt_tag = "kelly" if _rt_pnl >= 0 else "risk"
+        _rt_wl = "WIN" if _rt_pnl >= 0 else "LOSS"
+        _console_lines.append(
+            f'[<span class="tag {_rt_tag}">{_rt_wl}</span>] '
+            f'<span class="val">[{_rt.get("id","")}] {fmt_usd(_rt_pnl)} {_rt.get("strategy","")}</span>'
+        )
     if _ai_dec:
         _console_lines.append(f'[<span class="tag signal">AI</span>] <span class="val">{_ai_dec.get("side","?")} conf={_ai_dec.get("confidence",0):.0%} strategy={_ai_dec.get("strategy","")}</span>')
-        _reason = html_esc(_ai_dec.get("reasoning", "")[:100])
+        _reason = html_esc(_ai_dec.get("reasoning", "")[:80])
         if _reason:
-            _console_lines.append(f'[<span class="tag bayes">REASON</span>] <span class="val">{_reason}</span>')
-    if _ai_st:
-        _console_lines.append(f'[<span class="tag kelly">COST</span>] <span class="val">calls={_ai_st.get("total_calls",0)} cost=${_ai_st.get("total_cost_usd",0):.4f}</span>')
-    _console_lines.append(f'[<span class="tag exec">RTDS</span>] <span class="val">msgs={_bs.get("rtds_msgs",0)} connected={"YES" if _bs.get("rtds_connected") else "NO"}</span>')
-    _console_lines.append(f'[<span class="tag risk">RISK</span>] <span class="val">bankroll=${_realized:,.2f} open={len(_open_pos)} dd={(_peak - _realized) / _peak * 100 if _peak > 0 else 0:.1f}%</span>')
+            _console_lines.append(f'[<span class="tag bayes">WHY</span>] <span class="val">{_reason}</span>')
+    _console_lines.append(f'[<span class="tag exec">RTDS</span>] <span class="val">msgs={_bs.get("rtds_msgs",0)} {"OK" if _bs.get("rtds_connected") else "DOWN"}</span>')
+    _console_lines.append(f'[<span class="tag risk">RISK</span>] <span class="val">${_realized:,.2f} open={len(_open_pos)} dd={(_peak - _realized) / _peak * 100 if _peak > 0 else 0:.1f}%</span>')
     _console_html = "".join(f'<div class="console-line">{l}</div>' for l in _console_lines)
 
     # Build bankroll data for JS chart
@@ -1654,7 +1662,23 @@ with tab_btc:
               <div>MKT <span style="color:var(--org)">{_sig_mid}</span></div>
               <div>WINDOW <span id="timer" style="color:var(--grn);font-weight:700">—</span></div>
               <div>STATE <span style="color:{_sc}">{_sig_state}</span></div>
-              <div>HAIKU <span style="color:var(--cyn)">{_ai_st.get('total_calls', 0)} calls · ${_ai_st.get('total_cost_usd', 0):.4f}</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="ind"></span>HAIKU API COST</div>
+            <div style="display:flex;justify-content:space-around;padding:4px 0">
+              <div style="text-align:center">
+                <div style="color:var(--org);font-size:16px;font-weight:700;font-family:Orbitron,sans-serif">{_ai_st.get('total_calls', 0)}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">CALLS</div>
+              </div>
+              <div style="text-align:center">
+                <div style="color:var(--cyn);font-size:16px;font-weight:700;font-family:Orbitron,sans-serif">${_ai_st.get('total_cost_usd', 0):.4f}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">TOTAL</div>
+              </div>
+              <div style="text-align:center">
+                <div style="color:var(--grn);font-size:16px;font-weight:700;font-family:Orbitron,sans-serif">${_ai_st.get('total_cost_usd', 0) / max(1, _ai_st.get('total_calls', 1)):.4f}</div>
+                <div style="color:var(--dim);font-size:7px;letter-spacing:1px">AVG</div>
+              </div>
             </div>
           </div>
           <div class="card console-panel">

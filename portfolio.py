@@ -463,9 +463,13 @@ class Portfolio:
             self._update_peaks()
 
         ai_conf = f" AI={analysis.confidence:.2f}" if analysis else ""
+        # Use market ID from slug if available, else question
+        _slug = pos.slug or pos.market_slug or ""
+        _mid = _slug.split("-")[-1] if _slug and "-" in _slug else ""
+        _label = f"[{_mid}]" if _mid else pos.question[:50]
         logger.log(
             TRADE_LEVEL,
-            f"TRADE OPEN | {pos.question[:50]} | {pos.side} | "
+            f"TRADE OPEN | {_label} | {pos.side} | "
             f"size={pos.size:.2f} @ ${pos.entry_price:.3f} | "
             f"cost=${pos.cost_basis:.2f} | edge={opp.edge_pct:.1f}%{ai_conf}"
         )
@@ -512,9 +516,12 @@ class Portfolio:
         else:
             resolution = f"SETTLED @{payout_per_share:.2f}"
 
+        _slug = pos.slug or pos.market_slug or ""
+        _mid = _slug.split("-")[-1] if _slug and "-" in _slug else ""
+        _label = f"[{_mid}]" if _mid else pos.question[:50]
         logger.log(
             TRADE_LEVEL,
-            f"TRADE CLOSE | {pos.question[:50]} | "
+            f"TRADE CLOSE | {_label} | "
             f"{resolution} | "
             f"pnl=${pnl:+.2f} | bankroll=${self.state.current_bankroll:.2f}"
         )

@@ -183,6 +183,30 @@ def _write_signal_status(
             "reasoning": ai_decision.reasoning[:120],
         }
 
+    # Recent trade log for console display
+    try:
+        import portfolio as _pm
+        _hist = _pm.PORTFOLIO_FILE
+        if _hist.exists():
+            import json as _j2
+            with open(_hist, "r", encoding="utf-8") as _f:
+                _pd = _j2.load(_f)
+            _recent = []
+            for _t in (_pd.get("trade_history", []) or [])[-10:]:
+                _sl = _t.get("slug", "")
+                _mid2 = _sl.split("-")[-1] if _sl and "-" in _sl else ""
+                _pnl = _t.get("pnl", 0) or 0
+                _recent.append({
+                    "id": _mid2,
+                    "pnl": round(_pnl, 2),
+                    "side": _t.get("side", ""),
+                    "status": _t.get("status", ""),
+                    "strategy": _t.get("confidence_source", ""),
+                })
+            status["recent_trades"] = _recent
+    except Exception:
+        pass
+
     try:
         SIGNAL_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = SIGNAL_STATUS_FILE.with_suffix(".tmp")
