@@ -23,6 +23,7 @@ from utils import format_time_remaining, parse_iso, seconds_until
 
 PORTFOLIO_FILE = Path("data/portfolio.json")
 AI_STATS_FILE = Path("data/ai_stats.json")
+AI_FILTER_STATS_FILE = Path("data/ai_stats_filter.json")
 SHADOW_REPORT_FILE = Path("data/shadow_report.json")
 STRATEGY_REPORT_FILE = Path("data/strategy_expectancy.json")
 REALTIME_FEED_STATUS_FILE = Path("data/realtime_feed_status.json")
@@ -237,6 +238,7 @@ st.markdown("""
   .c-green { color: #00ff41 !important; text-shadow: 0 0 8px #00ff4140; }
   .c-red   { color: #ff0044 !important; text-shadow: 0 0 8px #ff004440; }
   .c-amber { color: #ffaa00 !important; text-shadow: 0 0 8px #ffaa0040; }
+  .c-blue  { color: #00aaff !important; text-shadow: 0 0 8px #00aaff40; }
   .c-muted { color: #00ff4160 !important; }
   .c-white { color: #ffffff !important; }
 
@@ -460,6 +462,7 @@ data = load_portfolio()
 shadow_report = load_json(SHADOW_REPORT_FILE)
 strategy_report = load_json(STRATEGY_REPORT_FILE)
 ai_stats = load_json(AI_STATS_FILE)
+ai_filter_stats = load_json(AI_FILTER_STATS_FILE)
 feed_status = load_json(REALTIME_FEED_STATUS_FILE)
 btc_data = load_json(BTC_PORTFOLIO_FILE)
 btc_signal = load_json(BTC_SIGNAL_FILE)
@@ -1190,27 +1193,45 @@ with tab_analytics:
 
     with col_ai:
         st.html('<div class="section-hdr">// AI USAGE</div>')
-        if ai_stats:
-            total_calls = ai_stats.get("total_calls", 0) or 0
-            est_cost = ai_stats.get("estimated_cost_usd", 0) or 0
-            in_tok = ai_stats.get("total_input_tokens", 0) or 0
-            out_tok = ai_stats.get("total_output_tokens", 0) or 0
-            model_name = ai_stats.get("model", "—")
-            in_price = getattr(config, "AI_INPUT_PRICE_PER_MTOK", 0)
-            out_price = getattr(config, "AI_OUTPUT_PRICE_PER_MTOK", 0)
-            cards_ai = st.columns(2)
+        has_filter = bool(ai_filter_stats)
+        has_deep = bool(ai_stats)
+
+        if has_filter or has_deep:
+            f_calls = (ai_filter_stats or {}).get("total_calls", 0) or 0
+            f_cost = (ai_filter_stats or {}).get("estimated_cost_usd", 0) or 0
+            f_model = (ai_filter_stats or {}).get("model", "—")
+            f_in = (ai_filter_stats or {}).get("total_input_tokens", 0) or 0
+            f_out = (ai_filter_stats or {}).get("total_output_tokens", 0) or 0
+
+            d_calls = (ai_stats or {}).get("total_calls", 0) or 0
+            d_cost = (ai_stats or {}).get("estimated_cost_usd", 0) or 0
+            d_model = (ai_stats or {}).get("model", "—")
+            d_in = (ai_stats or {}).get("total_input_tokens", 0) or 0
+            d_out = (ai_stats or {}).get("total_output_tokens", 0) or 0
+
+            total_cost = f_cost + d_cost
+            total_calls = f_calls + d_calls
+
+            cards_ai = st.columns(3)
             with cards_ai[0]:
                 st.html(neon_stat_card(
-                    "TOTAL CALLS",
-                    f"{total_calls:,}",
-                    model_name,
-                    "c-green",
+                    f"FILTER ({f_model})" if f_model != "—" else "FILTER",
+                    f"{f_calls:,} calls",
+                    f"${f_cost:.4f} · {f_in:,}+{f_out:,} tok",
+                    "c-blue",
                 ))
             with cards_ai[1]:
                 st.html(neon_stat_card(
-                    "EST. COST",
-                    f"${est_cost:.4f}",
-                    f"in {in_tok:,} · out {out_tok:,} tok",
+                    f"DEEP ({d_model})" if d_model != "—" else "DEEP",
+                    f"{d_calls:,} calls",
+                    f"${d_cost:.4f} · {d_in:,}+{d_out:,} tok",
+                    "c-green",
+                ))
+            with cards_ai[2]:
+                st.html(neon_stat_card(
+                    "TOTAL AI",
+                    f"${total_cost:.4f}",
+                    f"{total_calls:,} calls",
                     "c-amber",
                 ))
         else:
