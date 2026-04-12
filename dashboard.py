@@ -249,6 +249,18 @@ st.markdown("""
   }
 
   /* ══ Mobile responsive ══ */
+
+  /* Force touch scrolling on Streamlit containers */
+  html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* Table wrapper scroll */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Streamlit iframe (BTC terminal) must scroll on mobile */
+  iframe { max-width: 100% !important; }
+
   @media (max-width: 768px) {
     /* Topbar: stack vertically */
     .topbar {
@@ -286,6 +298,12 @@ st.markdown("""
     [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
       min-width: 48% !important;
       flex: 1 1 48% !important;
+    }
+
+    /* BTC terminal iframe: auto height */
+    iframe[title="streamlit_components.v1.components.html"] {
+      height: auto !important;
+      min-height: 500px !important;
     }
   }
 
@@ -1567,8 +1585,27 @@ with tab_btc:
       @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&display=swap');
       :root {{--bg:#0a0a0f;--bg2:#0d0d15;--bgc:#0f0f1a;--brd:#1a1a2e;--txt:#e0e0e8;--dim:#3a3a5a;--grn:#00ff88;--red:#ff3366;--blu:#00aaff;--org:#ff8800;--cyn:#00ffcc;}}
       *{{margin:0;padding:0;box-sizing:border-box}}
-      body,.terminal{{background:var(--bg);color:var(--txt);font-family:'JetBrains Mono',monospace;overflow:hidden}}
+      body,.terminal{{background:var(--bg);color:var(--txt);font-family:'JetBrains Mono',monospace}}
       .terminal{{height:720px;display:flex;flex-direction:column}}
+      @media (max-width:768px){{
+        body,.terminal{{overflow-y:auto;-webkit-overflow-scrolling:touch}}
+        .terminal{{height:auto;min-height:100%}}
+        .dashboard{{display:flex!important;flex-direction:column!important;overflow:visible!important}}
+        .trades-panel{{max-height:200px;overflow-y:auto!important;grid-column:auto!important;grid-row:auto!important}}
+        .middle-col{{grid-column:auto!important;grid-row:auto!important;overflow:visible!important}}
+        .middle-col>.card.console-panel{{max-height:180px;overflow-y:auto!important}}
+        .right-col{{grid-column:auto!important;grid-row:auto!important;display:flex!important;flex-direction:column!important;overflow:visible!important}}
+        .main-chart{{min-height:200px;overflow:visible!important}}
+        .chart-header{{flex-direction:column;gap:6px}}
+        .chart-meta{{text-align:left}}
+        .pnl-display{{font-size:20px!important}}
+        .stats-row{{grid-template-columns:repeat(2,1fr)!important}}
+        .stat-value{{font-size:12px!important}}
+        .bottom-panels{{grid-template-columns:1fr!important}}
+        .top-bar{{flex-wrap:wrap;gap:4px;font-size:8px!important}}
+        .top-bar .left{{font-size:8px!important}}
+        .bottom-bar{{flex-wrap:wrap;gap:4px 10px;font-size:7px!important}}
+      }}
       .terminal::after{{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,136,0.008) 2px,rgba(0,255,136,0.008) 4px);pointer-events:none;z-index:9999}}
       .top-bar{{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;background:linear-gradient(180deg,#0f0f1a,#0a0a0f);border-bottom:1px solid var(--brd);font-size:9px;letter-spacing:2px;text-transform:uppercase;flex-shrink:0;position:relative}}
       .top-bar::after{{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--grn),transparent);opacity:0.4}}
@@ -1761,7 +1798,7 @@ with tab_btc:
     </script>
     '''
 
-    components.html(_terminal_html, height=740, scrolling=False)
+    components.html(_terminal_html, height=740, scrolling=True)
 
     # (terminal dashboard rendered above via components.html)
 
