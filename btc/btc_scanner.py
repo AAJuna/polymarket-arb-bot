@@ -104,21 +104,21 @@ class BtcScanner:
 
         Uses slug-based lookup: each 5-min window has slug
         'btc-updown-5m-{unix_start}' on 300-second boundaries.
-        Query the current, previous, and next few windows directly.
+        Only queries current + next window (2 calls max) for speed.
         """
         markets: list[BtcMarket] = []
         now_unix = int(datetime.now(timezone.utc).timestamp())
-
-        # Round down to nearest 5-minute boundary
         current_start = now_unix - (now_unix % 300)
 
-        # Check windows: 1 previous, current, and 5 upcoming
-        window_starts = [current_start + (i * 300) for i in range(-1, 6)]
+        # Only fetch current and next window — 2 calls instead of 7
+        slugs = [
+            f"btc-updown-5m-{current_start}",
+            f"btc-updown-5m-{current_start + 300}",
+        ]
 
         url = f"{cfg.GAMMA_API_HOST}/events"
 
-        for ws in window_starts:
-            slug = f"btc-updown-5m-{ws}"
+        for slug in slugs:
             try:
                 resp = _session.get(
                     url, params={"slug": slug}, timeout=10
