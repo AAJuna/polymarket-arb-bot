@@ -1530,25 +1530,12 @@ with tab_btc:
     # Build console lines from AI decision
     _ai_dec = _bs.get("ai_decision", {})
     _ai_st = _bs.get("ai_stats", {})
-    _console_lines = []
-    # Recent trade logs
-    _recent_trades = _bs.get("recent_trades", [])
-    for _rt in reversed(_recent_trades[-6:]):
-        _rt_pnl = _rt.get("pnl", 0)
-        _rt_tag = "kelly" if _rt_pnl >= 0 else "risk"
-        _rt_wl = "WIN" if _rt_pnl >= 0 else "LOSS"
-        _console_lines.append(
-            f'[<span class="tag {_rt_tag}">{_rt_wl}</span>] '
-            f'<span class="val">[{_rt.get("id","")}] {fmt_usd(_rt_pnl)} {_rt.get("strategy","")}</span>'
-        )
-    if _ai_dec:
-        _console_lines.append(f'[<span class="tag signal">AI</span>] <span class="val">{_ai_dec.get("side","?")} conf={_ai_dec.get("confidence",0):.0%} strategy={_ai_dec.get("strategy","")}</span>')
-        _reason = html_esc(_ai_dec.get("reasoning", "")[:80])
-        if _reason:
-            _console_lines.append(f'[<span class="tag bayes">WHY</span>] <span class="val">{_reason}</span>')
-    _console_lines.append(f'[<span class="tag exec">RTDS</span>] <span class="val">msgs={_bs.get("rtds_msgs",0)} {"OK" if _bs.get("rtds_connected") else "DOWN"}</span>')
-    _console_lines.append(f'[<span class="tag risk">RISK</span>] <span class="val">${_realized:,.2f} open={len(_open_pos)} dd={(_peak - _realized) / _peak * 100 if _peak > 0 else 0:.1f}%</span>')
-    _console_html = "".join(f'<div class="console-line">{l}</div>' for l in _console_lines)
+    # Backend console log (direct from bot process)
+    _raw_logs = _bs.get("console_log", [])
+    _console_html = "".join(
+        f'<div class="console-line"><span class="val">{html_esc(line)}</span></div>'
+        for line in _raw_logs[-15:]
+    )
 
     # Build bankroll data for JS chart
     _chart_data = [e.get("bankroll", 0) for e in _bankroll_hist[-300:]] if _bankroll_hist else [_starting]

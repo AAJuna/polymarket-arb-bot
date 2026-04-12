@@ -19,11 +19,28 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Optional
 
+import collections
+import logging
+
 from btc import config_btc as cfg
 from btc.btc_scanner import BtcMarket, BtcScanner
 from btc.rtds_feed import RtdsFeed
 from btc.signal_engine import BtcSignal, SignalEngine
 from logger_setup import get_logger, setup_logging
+
+# In-memory log buffer for dashboard console
+_log_buffer: collections.deque = collections.deque(maxlen=20)
+
+
+class _DashboardLogHandler(logging.Handler):
+    """Capture log lines into a deque for dashboard display."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            _log_buffer.append(msg)
+        except Exception:
+            pass
 
 logger = get_logger(__name__)
 
@@ -183,29 +200,8 @@ def _write_signal_status(
             "reasoning": ai_decision.reasoning[:120],
         }
 
-    # Recent trade log for console display
-    try:
-        import portfolio as _pm
-        _hist = _pm.PORTFOLIO_FILE
-        if _hist.exists():
-            import json as _j2
-            with open(_hist, "r", encoding="utf-8") as _f:
-                _pd = _j2.load(_f)
-            _recent = []
-            for _t in (_pd.get("trade_history", []) or [])[-10:]:
-                _sl = _t.get("slug", "")
-                _mid2 = _sl.split("-")[-1] if _sl and "-" in _sl else ""
-                _pnl = _t.get("pnl", 0) or 0
-                _recent.append({
-                    "id": _mid2,
-                    "pnl": round(_pnl, 2),
-                    "side": _t.get("side", ""),
-                    "status": _t.get("status", ""),
-                    "strategy": _t.get("confidence_source", ""),
-                })
-            status["recent_trades"] = _recent
-    except Exception:
-        pass
+    # Backend console log for dashboard
+    status["console_log"] = list(_log_buffer)
 
     try:
         SIGNAL_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -219,6 +215,12 @@ def _write_signal_status(
 
 def run() -> None:
     setup_logging(cfg.LOG_LEVEL)
+
+    # Attach dashboard log handler to root logger
+    _dh = _DashboardLogHandler()
+    _dh.setFormatter(logging.Formatter("%(message)s"))
+    _dh.setLevel(logging.INFO)
+    logging.getLogger().addHandler(_dh)
 
     # Banner
     logger.info("=" * 56)
