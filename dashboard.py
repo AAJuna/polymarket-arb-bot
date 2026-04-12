@@ -1480,102 +1480,81 @@ with tab_btc:
         sig_market = btc_signal.get("market", {})
         sig_data = btc_signal.get("signal", {})
         sig_connected = btc_signal.get("rtds_connected", False)
+        sig_mid = sig_market.get("id", "")
+        sig_url = sig_market.get("url", "")
 
-        # State badge
+        # State badge with market ID
         state_colors = {
             "IDLE": ("pill-yellow", "SCANNING"),
-            "WAITING": ("pill-yellow", "WAITING FOR WINDOW"),
-            "OBSERVING": ("pill-green", "OBSERVING"),
+            "WAITING": ("pill-yellow", "WAITING"),
+            "COLLECTING": ("pill-yellow", "COLLECTING DATA"),
+            "ANALYZING": ("pill-green", "AI ANALYZING"),
             "TRADING": ("pill-green", "POSITION OPEN"),
             "RESOLVING": ("pill-yellow", "RESOLVING"),
         }
         pill_cls, pill_label = state_colors.get(sig_state, ("pill-red", sig_state))
-        conn_icon = "RTDS OK" if sig_connected else "RTDS DOWN"
+        id_label = f" | ID: {sig_mid}" if sig_mid else ""
         st.html(
             f'<div class="status-pill {pill_cls}">'
-            f'<span class="dot"></span>BTC BOT: {pill_label} — {conn_icon}'
+            f'<span class="dot"></span>BTC: {pill_label}{id_label}'
             f'</div>'
         )
 
-        # Live price cards
-        lc1, lc2, lc3, lc4 = st.columns(4)
-        with lc1:
-            st.html(neon_stat_card(
-                "BTC PRICE",
-                f"${sig_btc:,.2f}" if sig_btc else "—",
-                f"RTDS msgs: {btc_signal.get('rtds_msgs', 0)}",
-                "c-amber",
-            ))
-        with lc2:
-            if sig_strike:
-                diff = sig_btc - sig_strike if sig_btc else 0
-                direction = "ABOVE" if diff >= 0 else "BELOW"
-                st.html(neon_stat_card(
-                    "STRIKE",
-                    f"${sig_strike:,.2f}",
-                    f"${abs(diff):,.2f} {direction}",
-                    "c-green" if diff >= 0 else "c-red",
-                ))
-            else:
-                st.html(neon_stat_card("STRIKE", "—", "waiting for window", "c-white"))
-        with lc3:
-            if sig_data:
-                edge = sig_data.get("edge_pct", 0)
-                side = sig_data.get("side", "—")
-                st.html(neon_stat_card(
-                    f"SIGNAL: {side}",
-                    f"{edge:+.1f}%",
-                    f"conf={sig_data.get('confidence', 0):.0%}  vol={sig_data.get('volatility', 0):.0%}",
-                    "c-green" if edge >= 3 else "c-amber" if edge > 0 else "c-red",
-                ))
-            else:
-                st.html(neon_stat_card("SIGNAL", "—", "no data yet", "c-white"))
-        with lc4:
+        # Top row: BTC price large + key stats
+        top_left, top_right = st.columns([2, 1])
+
+        with top_left:
+            btc_display = f"${sig_btc:,.2f}" if sig_btc else "—"
             remaining = sig_market.get("time_remaining_sec", 0)
             mins = int(remaining // 60)
             secs = int(remaining % 60)
-            q = sig_market.get("question", "—")[:35] if sig_market else "—"
-            st.html(neon_stat_card(
-                "WINDOW",
-                f"{mins}:{secs:02d}" if remaining > 0 else "—",
-                q,
-                "c-green" if remaining > 60 else "c-amber" if remaining > 0 else "c-white",
-            ))
+            timer = f"{mins}:{secs:02d}" if remaining > 0 else "—"
+            up_p = sig_market.get("up_price", 0.5)
+            down_p = sig_market.get("down_price", 0.5)
+            up_pct = up_p / (up_p + down_p) * 100 if (up_p + down_p) > 0 else 50
 
-        # Signal detail table
-        if sig_data:
-            st.html('<div class="sep"></div>')
-            st.html('<div class="section-hdr">// SIGNAL ENGINE</div>')
+            st.html(f'''
+            <div style="padding:10px 0">
+              <div style="color:#f7931a;font-size:0.6rem;letter-spacing:2px">BTC/USD</div>
+              <div style="color:#f7931a;font-size:2.2rem;font-weight:bold;text-shadow:0 0 20px rgba(247,147,26,0.4)">{btc_display}</div>
+              <div style="display:flex;gap:24px;margin-top:6px">
+                <span style="color:#00ff41;font-size:0.75rem">UP {up_p:.2f} ({up_pct:.0f}%)</span>
+                <span style="color:#ff0044;font-size:0.75rem">DOWN {down_p:.2f} ({100-up_pct:.0f}%)</span>
+                <span style="color:#00ff4160;font-size:0.75rem">WINDOW {timer}</span>
+              </div>
+            </div>''')
 
-            p_up = sig_data.get("statistical_prob", 0.5)
-            p_down = 1.0 - p_up
-            mom = sig_data.get("momentum_adj", 0)
-            flow = sig_data.get("orderflow_adj", 0)
-            model_p = sig_data.get("model_probability", 0.5)
-            mkt_p = sig_data.get("market_price", 0.5)
-            up_mkt = sig_market.get("up_price", 0.5)
-            down_mkt = sig_market.get("down_price", 0.5)
+        with top_right:
+            if sig_data:
+                side = sig_data.get("side", "—")
+                conf = sig_data.get("confidence", 0)
+                side_color = "#00ff41" if side == "UP" else "#ff0044" if side == "DOWN" else "#666"
+                st.html(f'''
+                <div style="text-align:center;padding:10px 0">
+                  <div style="color:#00ff4160;font-size:0.6rem;letter-spacing:2px">AI SIGNAL</div>
+                  <div style="color:{side_color};font-size:2rem;font-weight:bold;text-shadow:0 0 15px {side_color}40">{side}</div>
+                  <div style="color:#00ff4160;font-size:0.7rem">conf {conf:.0%}</div>
+                </div>''')
+            elif sig_state == "COLLECTING":
+                st.html(f'''
+                <div style="text-align:center;padding:10px 0">
+                  <div style="color:#ffaa00;font-size:0.6rem;letter-spacing:2px">COLLECTING</div>
+                  <div style="color:#ffaa00;font-size:1.5rem;text-shadow:0 0 10px rgba(255,170,0,0.3)">...</div>
+                  <div style="color:#00ff4160;font-size:0.7rem">gathering price data</div>
+                </div>''')
+            else:
+                st.html(f'''
+                <div style="text-align:center;padding:10px 0">
+                  <div style="color:#00ff4140;font-size:0.6rem;letter-spacing:2px">SIGNAL</div>
+                  <div style="color:#00ff4140;font-size:1.5rem">—</div>
+                </div>''')
 
+        # Market ID link
+        if sig_mid:
             st.html(
-                '<div class="data-table-wrap"><table class="data-table">'
-                '<tr><th>LAYER</th><th>VALUE</th><th>DESCRIPTION</th></tr>'
-                f'<tr><td style="color:#f7931a">Statistical</td>'
-                f'<td class="c-green">{p_up:.1%} UP / {p_down:.1%} DOWN</td>'
-                f'<td style="color:#00ff4160">Gaussian model (75% weight)</td></tr>'
-                f'<tr><td style="color:#f7931a">Momentum</td>'
-                f'<td class="{"c-green" if mom > 0 else "c-red" if mom < 0 else "c-white"}">{mom:+.2%}</td>'
-                f'<td style="color:#00ff4160">60s price slope (15% weight)</td></tr>'
-                f'<tr><td style="color:#f7931a">Order Flow</td>'
-                f'<td class="{"c-green" if flow > 0 else "c-red" if flow < 0 else "c-white"}">{flow:+.2%}</td>'
-                f'<td style="color:#00ff4160">Market consensus (10% weight)</td></tr>'
-                '<tr><td colspan="3" style="border-top:1px solid #00ff4120"></td></tr>'
-                f'<tr><td style="color:#fff">Model</td>'
-                f'<td class="c-green" style="font-weight:bold">{model_p:.1%}</td>'
-                f'<td style="color:#00ff4160">Combined P({sig_data.get("side","?")})</td></tr>'
-                f'<tr><td style="color:#fff">Market</td>'
-                f'<td class="c-amber">{mkt_p:.1%}</td>'
-                f'<td style="color:#00ff4160">Polymarket: Up={up_mkt:.2f} Down={down_mkt:.2f}</td></tr>'
-                '</table></div>'
+                f'<div style="color:#00ff4130;font-size:0.6rem;font-family:monospace;padding:2px 0">'
+                f'MKT {sig_mid}'
+                f'</div>'
             )
 
         st.html('<div class="sep"></div>')
@@ -1606,7 +1585,7 @@ with tab_btc:
         btc_win_rate = (btc_wins / len(btc_history) * 100) if btc_history else 0.0
 
         # --- Hero Cards ---
-        st.html('<div class="section-hdr">// BTC 5-MINUTE BOT</div>')
+        st.html('<div class="section-hdr">// PERFORMANCE</div>')
 
         b1, b2, b3, b4 = st.columns(4)
 
@@ -1689,7 +1668,7 @@ with tab_btc:
 
             fig_btc.update_layout(
                 **plotly_theme(),
-                height=220,
+                height=300,
                 showlegend=False,
                 yaxis_tickprefix="$",
             )
@@ -1753,9 +1732,14 @@ with tab_btc:
                 else:
                     badge = '<span class="badge badge-red">LOSS</span>'
 
-                q = html_esc(trade.get("question", "?")[:45])
+                # Extract market ID from slug
+                slug = trade.get("slug", "")
+                mid = slug.split("-")[-1] if slug else ""
+
+                q = html_esc(trade.get("question", "?")[:35])
                 entry = trade.get("entry_price", 0)
                 exit_v = exit_p if exit_p is not None else 0
+                strategy = trade.get("confidence_source", "")
                 closed = trade.get("closed_at", "")
                 try:
                     closed_fmt = parse_iso(closed).strftime("%m/%d %H:%M") if closed else "—"
@@ -1765,18 +1749,20 @@ with tab_btc:
                 rows += (
                     f'<tr>'
                     f'<td>{badge}</td>'
+                    f'<td style="color:#f7931a;font-size:0.65rem">{mid}</td>'
                     f'<td style="color:#ccc">{q}</td>'
                     f'<td>${entry:.2f}</td>'
                     f'<td>${exit_v:.2f}</td>'
                     f'<td class="{pnl_color(pnl_val)}">{fmt_usd(pnl_val)}</td>'
+                    f'<td style="color:#00ff4160;font-size:0.65rem">{strategy}</td>'
                     f'<td style="color:#00ff4160">{closed_fmt}</td>'
                     f'</tr>'
                 )
 
             st.html(
                 '<div class="data-table-wrap"><table class="data-table">'
-                '<tr><th></th><th>MARKET</th><th>ENTRY</th><th>EXIT</th>'
-                '<th>P&L</th><th>CLOSED</th></tr>'
+                '<tr><th></th><th>ID</th><th>MARKET</th><th>ENTRY</th><th>EXIT</th>'
+                '<th>P&L</th><th>STRATEGY</th><th>CLOSED</th></tr>'
                 + rows + '</table></div>'
             )
 

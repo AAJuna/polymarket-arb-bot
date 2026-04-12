@@ -138,7 +138,10 @@ def _write_signal_status(
 
     if market:
         time_remaining = max(0, (market.window_end - now).total_seconds())
+        mid = _market_id_slug(market)
         status["market"] = {
+            "id": mid,
+            "url": _market_url(market),
             "question": market.question,
             "window_start": market.window_start.isoformat(),
             "window_end": market.window_end.isoformat(),
@@ -287,13 +290,12 @@ def run() -> None:
                 if market:
                     current_market = market
                     ai_decision = None
-                    url = _market_url(market)
+                    mid = _market_id_slug(market)
                     state = State.WAITING
                     logger.info(
-                        f"Found: {market.question[:50]}  "
-                        f"start={market.window_start.strftime('%H:%M:%S')}  "
-                        f"end={market.window_end.strftime('%H:%M:%S')}  "
-                        f"{url}"
+                        f"[{mid}] {market.question[:50]}  "
+                        f"{market.window_start.strftime('%H:%M:%S')}-"
+                        f"{market.window_end.strftime('%H:%M:%S')}"
                     )
                 _write_signal_status(state, rtds, engine, current_market)
                 _sleep(cfg.POLL_INTERVAL_IDLE, running)
@@ -421,14 +423,12 @@ def run() -> None:
                         if result:
                             pos = port.record_trade(opp, result, ai_decision)
                             current_position_id = pos.position_id
-                            url = _market_url(current_market)
                             mid = _market_id_slug(current_market)
                             state = State.TRADING
                             logger.info(
-                                f"ENTRY: {ai_decision.side} @ {opp.price:.2f}  "
+                                f"[{mid}] ENTRY {ai_decision.side} @ {opp.price:.2f}  "
                                 f"conf={ai_decision.confidence:.0%}  "
-                                f"strategy={ai_decision.strategy}  "
-                                f"| ID={mid}  {url}"
+                                f"strategy={ai_decision.strategy}"
                             )
                     else:
                         logger.info(f"Risk blocked: {block_reason}")
