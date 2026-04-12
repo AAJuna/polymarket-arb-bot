@@ -300,7 +300,7 @@ def run() -> None:
     current_market: Optional[BtcMarket] = None
     current_position_id: Optional[str] = None
     ai_decision: Optional[object] = None  # BtcAIAnalysis
-    skipped_condition_ids: set[str] = set()  # don't re-enter skipped windows
+    done_condition_ids: set[str] = set()  # don't re-enter traded or skipped windows
     cycle = 0
     last_status_log = 0.0
     last_resolution_check = 0.0
@@ -320,9 +320,9 @@ def run() -> None:
             # ============================================================
             if state == State.IDLE:
                 market = scanner.get_tradeable_window()
-                if market and market.condition_id in skipped_condition_ids:
+                if market and market.condition_id in done_condition_ids:
                     market = scanner.get_next_window()
-                if market and market.condition_id in skipped_condition_ids:
+                if market and market.condition_id in done_condition_ids:
                     market = None
                 if market:
                     current_market = market
@@ -409,7 +409,7 @@ def run() -> None:
                     else:
                         reason = ai_decision.reasoning if ai_decision else "no analysis"
                         logger.info(f"AI says SKIP: {reason}")
-                        skipped_condition_ids.add(current_market.condition_id)
+                        done_condition_ids.add(current_market.condition_id)
                         engine.reset()
                         current_market = None
                         ai_decision = None
@@ -460,6 +460,7 @@ def run() -> None:
                         if result:
                             pos = port.record_trade(opp, result, ai_decision)
                             current_position_id = pos.position_id
+                            done_condition_ids.add(current_market.condition_id)
                             mid = _market_id_slug(current_market)
                             state = State.TRADING
                             logger.info(
@@ -532,8 +533,8 @@ def run() -> None:
                     _sleep(cfg.POLL_INTERVAL_IDLE, running)
 
             # Trim skipped set (keep only recent)
-            if len(skipped_condition_ids) > 20:
-                skipped_condition_ids = set(list(skipped_condition_ids)[-10:])
+            if len(done_condition_ids) > 20:
+                done_condition_ids = set(list(done_condition_ids)[-10:])
 
             # Periodic status log
             if time.monotonic() - last_status_log > 60:
