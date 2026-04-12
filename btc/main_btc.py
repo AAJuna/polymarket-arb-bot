@@ -64,15 +64,17 @@ def _build_opportunity(signal: BtcSignal, market: BtcMarket) -> BtcOpportunity:
     """Convert a BtcSignal + BtcMarket into an executor-compatible opportunity."""
     if signal.side == "UP":
         token_id = market.up_token_id
+        side = "YES"   # Up = outcome[0] → YES → outcome_prices[0]
     else:
         token_id = market.down_token_id
+        side = "NO"    # Down = outcome[1] → NO → outcome_prices[1]
 
     return BtcOpportunity(
         type="btc_5min",
         market_id=market.market_id,
         condition_id=market.condition_id,
         token_id=token_id,
-        side="YES",  # always buying the chosen side
+        side=side,
         price=signal.market_price,
         edge_pct=signal.edge_pct,
         confidence_source="btc_signal",
