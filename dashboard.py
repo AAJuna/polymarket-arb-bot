@@ -1472,7 +1472,9 @@ with tab_config:
 # ---------------------------------------------------------------------------
 
 with tab_btc:
-    # ── Collect all data up front ──
+    # ── Build full HTML terminal dashboard ──
+    import streamlit.components.v1 as components
+
     _bs = btc_signal or {}
     _bd = btc_data or {}
     _sig_state = _bs.get("state", "OFFLINE")
@@ -1502,11 +1504,246 @@ with tab_btc:
     _wins = sum(1 for t in _history if (t.get("pnl") or 0) > 0)
     _wr = (_wins / len(_history) * 100) if _history else 0
 
-    # ── TWO-COLUMN LAYOUT ──
-    col_left, col_right = st.columns([3, 2])
+    # Build trade rows HTML
+    _trade_rows_html = ""
+    for _t in reversed(_history[-30:]):
+        _pv = _t.get("pnl", 0) or 0
+        _slug = _t.get("slug", "")
+        _tmid = _slug.split("-")[-1] if _slug else ""
+        _strat = _t.get("confidence_source", "")[:12]
+        _side_cls = "buy" if _pv >= 0 else "sell"
+        _side_label = "WIN" if _pv >= 0 else "LOSS"
+        _pnl_cls = "pos" if _pv >= 0 else "neg"
+        _closed = _t.get("closed_at", "")
+        try:
+            _ct = parse_iso(_closed).strftime("%H:%M:%S") if _closed else ""
+        except Exception:
+            _ct = ""
+        _trade_rows_html += (
+            f'<div class="trade-row">'
+            f'<div><div class="trade-side {_side_cls}">{_side_label}</div>'
+            f'<div class="trade-time">{_ct}</div></div>'
+            f'<div class="trade-pair">{_tmid} <span style="color:#3a3a5a">{_strat}</span></div>'
+            f'<div class="trade-pnl {_pnl_cls}">{fmt_usd(_pv)}</div></div>'
+        )
 
-    # ════════════════════════════════════════════════
-    # LEFT COLUMN: Equity curve + big stats
+    # Build console lines from AI decision
+    _ai_dec = _bs.get("ai_decision", {})
+    _ai_st = _bs.get("ai_stats", {})
+    _console_lines = []
+    if _ai_dec:
+        _console_lines.append(f'[<span class="tag signal">AI</span>] <span class="val">{_ai_dec.get("side","?")} conf={_ai_dec.get("confidence",0):.0%} strategy={_ai_dec.get("strategy","")}</span>')
+        _reason = html_esc(_ai_dec.get("reasoning", "")[:100])
+        if _reason:
+            _console_lines.append(f'[<span class="tag bayes">REASON</span>] <span class="val">{_reason}</span>')
+    if _ai_st:
+        _console_lines.append(f'[<span class="tag kelly">COST</span>] <span class="val">calls={_ai_st.get("total_calls",0)} cost=${_ai_st.get("total_cost_usd",0):.4f}</span>')
+    _console_lines.append(f'[<span class="tag exec">RTDS</span>] <span class="val">msgs={_bs.get("rtds_msgs",0)} connected={"YES" if _bs.get("rtds_connected") else "NO"}</span>')
+    _console_lines.append(f'[<span class="tag risk">RISK</span>] <span class="val">bankroll=${_realized:,.2f} open={len(_open_pos)} dd={(_peak - _realized) / _peak * 100 if _peak > 0 else 0:.1f}%</span>')
+    _console_html = "".join(f'<div class="console-line">{l}</div>' for l in _console_lines)
+
+    # Build bankroll data for JS chart
+    _chart_data = [e.get("bankroll", 0) for e in _bankroll_hist[-300:]] if _bankroll_hist else [_starting]
+
+    # Build P&L bars data for JS
+    _pnl_data = [round(_t.get("pnl", 0) or 0, 2) for _t in _history[-30:]]
+
+    # Pressure bars from market prices
+    _buy_pct = _up_p / (_up_p + _down_p) * 100 if (_up_p + _down_p) > 0 else 50
+
+    # State color
+    _state_colors_map = {"IDLE": "#6a6a8a", "WAITING": "#ff8800", "COLLECTING": "#ff8800", "ANALYZING": "#00ff88", "TRADING": "#00ff88", "RESOLVING": "#ff8800", "OFFLINE": "#ff3366"}
+    _sc = _state_colors_map.get(_sig_state, "#ff3366")
+
+    # Window end ISO for JS timer
+    _window_end_iso = _sig_mkt.get("window_end", "")
+
+    # Signal side
+    _ai_side = _ai_dec.get("side", "") if _ai_dec else ""
+    _ai_conf = _ai_dec.get("confidence", 0) if _ai_dec else 0
+    _ai_side_color = "#00ff88" if _ai_side == "UP" else "#ff3366" if _ai_side == "DOWN" else "#6a6a8a"
+
+    _btc_str = f"${_sig_btc:,.2f}" if _sig_btc else "$—"
+    _pnl_sign = "+" if _total_pnl >= 0 else ""
+    _pnl_color_hex = "#00ff88" if _total_pnl >= 0 else "#ff3366"
+
+    _terminal_html = f'''
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&display=swap');
+      :root {{--bg:#0a0a0f;--bg2:#0d0d15;--bgc:#0f0f1a;--brd:#1a1a2e;--txt:#e0e0e8;--dim:#3a3a5a;--grn:#00ff88;--red:#ff3366;--blu:#00aaff;--org:#ff8800;--cyn:#00ffcc;}}
+      *{{margin:0;padding:0;box-sizing:border-box}}
+      body,.terminal{{background:var(--bg);color:var(--txt);font-family:'JetBrains Mono',monospace;overflow:hidden}}
+      .terminal{{height:720px;display:flex;flex-direction:column}}
+      .terminal::after{{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,136,0.008) 2px,rgba(0,255,136,0.008) 4px);pointer-events:none;z-index:9999}}
+      .top-bar{{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;background:linear-gradient(180deg,#0f0f1a,#0a0a0f);border-bottom:1px solid var(--brd);font-size:9px;letter-spacing:2px;text-transform:uppercase;flex-shrink:0;position:relative}}
+      .top-bar::after{{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--grn),transparent);opacity:0.4}}
+      .top-bar .left{{color:var(--grn);font-family:'Orbitron',sans-serif;font-weight:700;font-size:10px}}
+      .top-bar .right{{color:#6a6a8a}}
+      .dot{{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;background:var(--grn);box-shadow:0 0 8px var(--grn);animation:pulse 2s infinite}}
+      @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
+      @keyframes slideIn{{from{{opacity:0;transform:translateX(-10px)}}to{{opacity:1;transform:translateX(0)}}}}
+      .dashboard{{display:grid;grid-template-columns:220px 240px 1fr;gap:1px;background:var(--brd);flex:1;min-height:0}}
+      .card{{background:var(--bgc);padding:10px;position:relative;min-width:0;min-height:0}}
+      .card::before{{content:'';position:absolute;top:0;left:0;width:100%;height:1px;background:linear-gradient(90deg,transparent,rgba(0,255,136,0.12),transparent)}}
+      .card-title{{font-family:'Orbitron',sans-serif;font-size:7px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:var(--dim);margin-bottom:8px;display:flex;align-items:center;gap:6px}}
+      .card-title .ind{{width:4px;height:4px;border-radius:50%;background:var(--grn);box-shadow:0 0 6px var(--grn)}}
+      .trades-panel{{grid-column:1;grid-row:1/-1;overflow:hidden;display:flex;flex-direction:column}}
+      .trades-scroll{{flex:1;overflow-y:auto;min-height:0}}
+      .trade-row{{display:grid;grid-template-columns:48px 1fr 55px;gap:4px;padding:3px 0;font-size:9px;border-bottom:1px solid #ffffff04;animation:slideIn 0.3s ease-out both}}
+      .trade-side{{font-weight:700;font-size:8px;letter-spacing:1px}}
+      .trade-side.buy{{color:var(--grn)}}.trade-side.sell{{color:var(--red)}}
+      .trade-pair{{color:#6a6a8a}}.trade-time{{font-size:7px;color:var(--dim)}}
+      .trade-pnl{{text-align:right}}.trade-pnl.pos{{color:var(--grn)}}.trade-pnl.neg{{color:var(--red)}}
+      .middle-col{{grid-column:2;grid-row:1/-1;display:flex;flex-direction:column;gap:1px;background:var(--brd);min-height:0;overflow:hidden}}
+      .middle-col>.card{{flex-shrink:0}}.middle-col>.card.console-panel{{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}}
+      .console-scroll{{flex:1;overflow-y:auto;min-height:0}}
+      .console-line{{font-family:'Share Tech Mono',monospace;font-size:8.5px;padding:2px 0;color:var(--dim);white-space:nowrap;overflow:hidden}}
+      .console-line .tag{{font-weight:700}}.tag.exec{{color:var(--blu)}}.tag.signal{{color:var(--org)}}.tag.risk{{color:var(--red)}}.tag.kelly{{color:var(--grn)}}.tag.bayes{{color:var(--cyn)}}
+      .console-line .val{{color:#6a6a8a}}
+      .pressure-row{{display:grid;grid-template-columns:52px 1fr;gap:6px;align-items:center;padding:3px 0;font-size:9px}}
+      .pressure-label{{color:var(--dim);font-size:8px;letter-spacing:1px}}
+      .pressure-bar-wrap{{display:flex;height:9px;border-radius:2px;overflow:hidden;background:#0a0a12}}
+      .pressure-buy{{background:linear-gradient(90deg,#00ff8800,var(--grn));height:100%}}
+      .pressure-sell{{background:linear-gradient(90deg,var(--red),#ff336600);height:100%}}
+      .right-col{{grid-column:3;grid-row:1/-1;display:grid;grid-template-rows:1fr auto auto;gap:1px;background:var(--brd);min-height:0;overflow:hidden}}
+      .main-chart{{padding:14px;overflow:hidden;display:flex;flex-direction:column}}
+      .chart-header{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;flex-shrink:0}}
+      .pnl-display{{font-family:'Orbitron',sans-serif;font-size:28px;font-weight:900;color:{_pnl_color_hex};text-shadow:0 0 30px {_pnl_color_hex}40;line-height:1}}
+      .pnl-label{{font-size:8px;color:var(--dim);letter-spacing:2.5px;margin-top:3px}}
+      .chart-meta{{text-align:right;font-size:9px;color:var(--dim);line-height:1.6}}
+      .chart-meta .val{{color:var(--cyn)}}
+      .chart-canvas{{flex:1;min-height:0}}
+      .chart-canvas canvas{{width:100%;height:100%;display:block}}
+      .stats-row{{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--brd)}}
+      .stat-cell{{background:var(--bgc);padding:10px 8px;text-align:center}}
+      .stat-label{{font-family:'Orbitron',sans-serif;font-size:7px;letter-spacing:2px;color:var(--dim);margin-bottom:4px}}
+      .stat-value{{font-family:'Orbitron',sans-serif;font-size:16px;font-weight:700}}
+      .stat-value.green{{color:var(--grn);text-shadow:0 0 20px #00ff8830}}
+      .stat-value.blue{{color:var(--blu)}}.stat-value.orange{{color:var(--org);text-shadow:0 0 20px #ff880030}}.stat-value.cyan{{color:var(--cyn)}}
+      .bottom-panels{{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--brd)}}
+      .pnl-bar{{display:inline-block;width:100%;min-height:2px;margin:1px 0}}
+      .bottom-bar{{background:var(--bg2);padding:5px 14px;display:flex;justify-content:space-between;font-size:8px;color:var(--dim);letter-spacing:1px;border-top:1px solid var(--brd);flex-shrink:0}}
+      ::-webkit-scrollbar{{width:3px}}::-webkit-scrollbar-track{{background:var(--bg)}}::-webkit-scrollbar-thumb{{background:var(--brd);border-radius:3px}}
+    </style>
+    <div class="terminal">
+      <div class="top-bar">
+        <div class="left"><span class="dot"></span>POLY TERMINAL // BTC 5M DESK</div>
+        <div class="right" id="clock">UTC 00:00:00</div>
+      </div>
+      <div class="dashboard">
+        <div class="card trades-panel">
+          <div class="card-title"><span class="ind"></span>TRADE HISTORY</div>
+          <div class="trades-scroll">{_trade_rows_html if _trade_rows_html else '<div style="color:#3a3a5a;font-size:9px;padding:20px 0;text-align:center">NO TRADES YET</div>'}</div>
+        </div>
+        <div class="middle-col">
+          <div class="card">
+            <div class="card-title"><span class="ind"></span>AI SIGNAL</div>
+            <div style="text-align:center;padding:8px 0">
+              <div style="color:{_ai_side_color};font-size:2rem;font-weight:900;font-family:Orbitron,sans-serif;text-shadow:0 0 25px {_ai_side_color}40">{_ai_side or '—'}</div>
+              <div style="color:#6a6a8a;font-size:9px;margin-top:4px">{'conf ' + f'{_ai_conf:.0%}' + ' · ' + (_ai_dec.get('strategy','') if _ai_dec else '') if _ai_side else _sig_state}</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="ind"></span>BUY / SELL PRESSURE</div>
+            <div class="pressure-row"><div class="pressure-label">UP</div><div class="pressure-bar-wrap"><div class="pressure-buy" style="width:{_buy_pct:.0f}%"></div><div class="pressure-sell" style="width:{100-_buy_pct:.0f}%"></div></div></div>
+            <div style="display:flex;justify-content:space-between;font-size:8px;padding:4px 0 0 0"><span style="color:var(--grn)">{_up_p:.2f} ({_buy_pct:.0f}%)</span><span style="color:var(--red)">{_down_p:.2f} ({100-_buy_pct:.0f}%)</span></div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="ind"></span>MARKET</div>
+            <div style="font-size:9px;color:#6a6a8a;line-height:1.8">
+              <div>MKT <span style="color:var(--org)">{_sig_mid}</span></div>
+              <div>WINDOW <span id="timer" style="color:var(--grn);font-weight:700">—</span></div>
+              <div>STATE <span style="color:{_sc}">{_sig_state}</span></div>
+              <div>HAIKU <span style="color:var(--cyn)">{_ai_st.get('total_calls', 0)} calls · ${_ai_st.get('total_cost_usd', 0):.4f}</span></div>
+            </div>
+          </div>
+          <div class="card console-panel">
+            <div class="card-title"><span class="ind"></span>CONSOLE</div>
+            <div class="console-scroll">{_console_html}</div>
+          </div>
+        </div>
+        <div class="right-col">
+          <div class="card main-chart">
+            <div class="chart-header">
+              <div>
+                <div class="pnl-display">{_pnl_sign}{fmt_usd(_total_pnl)}</div>
+                <div class="pnl-label">P/L TOTAL · {_roi:+.1f}% ROI</div>
+              </div>
+              <div class="chart-meta">
+                <div>BTC <span class="val">{_btc_str}</span></div>
+                <div>TRADES <span class="val">{_n_trades}</span></div>
+                <div>WIN RATE <span class="val">{_wr:.1f}%</span></div>
+              </div>
+            </div>
+            <div class="chart-canvas"><canvas id="eqChart"></canvas></div>
+          </div>
+          <div class="stats-row">
+            <div class="stat-cell"><div class="stat-label">EQUITY</div><div class="stat-value green">${_realized:,.0f}</div></div>
+            <div class="stat-cell"><div class="stat-label">WIN RATE</div><div class="stat-value blue">{_wr:.1f}%</div></div>
+            <div class="stat-cell"><div class="stat-label">TODAY</div><div class="stat-value orange">{fmt_usd(_daily_pnl)}</div></div>
+            <div class="stat-cell"><div class="stat-label">TRADES</div><div class="stat-value cyan">{_n_trades}</div></div>
+          </div>
+          <div class="bottom-panels">
+            <div class="card">
+              <div class="card-title"><span class="ind"></span>P/L PER TRADE</div>
+              <canvas id="pnlBars" height="100"></canvas>
+            </div>
+            <div class="card">
+              <div class="card-title"><span class="ind"></span>AI REASONING</div>
+              <div style="font-size:8px;color:#6a6a8a;line-height:1.6">{html_esc(_ai_dec.get('reasoning','No analysis yet')[:200]) if _ai_dec else 'Waiting for AI analysis...'}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="bottom-bar">
+        <div style="color:var(--grn);font-weight:600">{_sig_state} · MKT {_sig_mid}</div>
+        <div>BTC {_btc_str}</div>
+        <div>POLY TERMINAL v1.0 // BTC 5M</div>
+      </div>
+    </div>
+    <script>
+    // Clock
+    !function(){{var e=document.getElementById('clock');if(!e)return;setInterval(()=>{{e.textContent='UTC '+new Date().toUTCString().split(' ')[4]}},1000)}}();
+    // Timer countdown
+    !function(){{var end=new Date("{_window_end_iso}").getTime(),el=document.getElementById('timer');
+    if(!el||!end)return;
+    function tick(){{var d=Math.max(0,Math.floor((end-Date.now())/1000)),m=Math.floor(d/60),s=d%60;
+    el.textContent=m+":"+(s<10?"0":"")+s;if(d<=60)el.style.color="#ff8800";if(d<=10)el.style.color="#ff3366";
+    if(d>0)setTimeout(tick,1000);else el.textContent="ENDED"}}tick()}}();
+    // Equity chart
+    !function(){{var cv=document.getElementById('eqChart'),ctx=cv.getContext('2d'),data={json.dumps(_chart_data)};
+    if(!data.length)return;
+    function draw(){{var c=cv.parentElement.getBoundingClientRect();if(c.width<10||c.height<10)return;
+    var d=window.devicePixelRatio||1;cv.width=c.width*d;cv.height=c.height*d;cv.style.width=c.width+'px';cv.style.height=c.height+'px';
+    ctx.setTransform(d,0,0,d,0,0);var w=c.width,h=c.height;ctx.clearRect(0,0,w,h);
+    ctx.strokeStyle='#1a1a2e';ctx.lineWidth=.5;
+    for(var i=0;i<6;i++){{var y=(h/6)*i;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}}
+    var mx=Math.max(...data),mn=Math.min(...data),rng=mx-mn||1;
+    var g=ctx.createLinearGradient(0,0,0,h);g.addColorStop(0,'rgba(0,255,136,0.15)');g.addColorStop(1,'rgba(0,255,136,0)');
+    ctx.beginPath();ctx.moveTo(0,h);
+    data.forEach(function(v,i){{ctx.lineTo((i/(data.length-1))*w,h-((v-mn)/rng)*(h*.85)-h*.05)}});
+    ctx.lineTo(w,h);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+    ctx.beginPath();data.forEach(function(v,i){{var x=(i/(data.length-1))*w,y=h-((v-mn)/rng)*(h*.85)-h*.05;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}});
+    ctx.strokeStyle='#00ff88';ctx.lineWidth=2;ctx.shadowColor='#00ff88';ctx.shadowBlur=10;ctx.stroke();ctx.shadowBlur=0;
+    var ly=h-((data[data.length-1]-mn)/rng)*(h*.85)-h*.05;
+    ctx.beginPath();ctx.arc(w-1,ly,4,0,Math.PI*2);ctx.fillStyle='#00ff88';ctx.shadowColor='#00ff88';ctx.shadowBlur=16;ctx.fill();ctx.shadowBlur=0}}
+    draw();window.addEventListener('resize',draw)}}();
+    // P&L bars
+    !function(){{var cv=document.getElementById('pnlBars'),ctx=cv.getContext('2d'),data={json.dumps(_pnl_data)};
+    if(!data.length)return;var c=cv.parentElement.getBoundingClientRect();
+    var d=window.devicePixelRatio||1;cv.width=(c.width-20)*d;cv.height=100*d;cv.style.width=(c.width-20)+'px';cv.style.height='100px';
+    ctx.setTransform(d,0,0,d,0,0);var w=c.width-20,h=100;
+    var mx=Math.max(...data.map(Math.abs))||1,bw=Math.max(4,w/data.length-2);
+    data.forEach(function(v,i){{var bh=Math.abs(v)/mx*(h*.4),x=i*(bw+2),y=v>=0?h/2-bh:h/2;
+    ctx.fillStyle=v>=0?'#00ff88':'#ff3366';ctx.shadowColor=v>=0?'#00ff88':'#ff3366';ctx.shadowBlur=4;
+    ctx.fillRect(x,y,bw,bh);ctx.shadowBlur=0}})}}();
+    </script>
+    '''
+
+    components.html(_terminal_html, height=740, scrolling=False)
+
+    if False:  # old 2-column layout removed
+        pass  # LEFT COLUMN: Equity curve + big stats
     # ════════════════════════════════════════════════
     with col_left:
         # Big P&L header
