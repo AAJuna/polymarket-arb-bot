@@ -672,7 +672,187 @@ with tab_overview:
 # ---------------------------------------------------------------------------
 
 with tab_positions:
-    st.markdown('<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">// POSITIONS TAB — COMING SOON</div>', unsafe_allow_html=True)
+    # --- Open Positions Table ---
+    st.markdown(f'<div class="section-hdr">// OPEN POSITIONS [{len(open_pos)}]</div>', unsafe_allow_html=True)
+
+    if open_pos:
+        rows_html = ""
+        for pos_id, pos in open_pos.items():
+            question = pos.get("question", "")[:50]
+            side = pos.get("side", "")
+            if side == "YES":
+                side_badge = (
+                    '<span style="background:#00ff4115;color:#00ff41;border:1px solid #00ff4130;'
+                    'border-radius:3px;padding:1px 6px;font-size:0.6rem;letter-spacing:0.05em;">YES</span>'
+                )
+            else:
+                side_badge = (
+                    '<span style="background:#ff004415;color:#ff0044;border:1px solid #ff004430;'
+                    'border-radius:3px;padding:1px 6px;font-size:0.6rem;letter-spacing:0.05em;">NO</span>'
+                )
+            entry = pos.get("entry_price", 0)
+            shares = pos.get("size", 0)
+            cost = pos.get("cost_basis", 0)
+            max_pnl = shares * (1.0 - entry) if side == "YES" else shares * entry
+            end_date = pos.get("end_date", "")
+            ends_str = fmt_end_window(end_date)
+            url = build_market_url(pos)
+            rows_html += f"""
+            <tr style="border-bottom:1px solid #00ff4110;">
+              <td style="padding:7px 8px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">{question}</td>
+              <td style="padding:7px 8px;text-align:center;">{side_badge}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{entry:.3f}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{shares:.2f}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{fmt_usd(cost)}</td>
+              <td style="padding:7px 8px;text-align:right;color:#00ff41;text-shadow:0 0 6px #00ff4180;">{fmt_usd(max_pnl)}</td>
+              <td style="padding:7px 8px;text-align:right;color:{C_WARNING};">{ends_str}</td>
+              <td style="padding:7px 8px;text-align:center;"><a href="{url}" target="_blank" style="color:#00ff4180;text-decoration:none;font-size:0.75rem;">&#8599;</a></td>
+            </tr>"""
+        st.markdown(f"""
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
+            <thead>
+              <tr style="border-bottom:1px solid #00ff4130;color:#00ff4160;font-size:0.55rem;letter-spacing:0.08em;">
+                <th style="padding:6px 8px;text-align:left;">MARKET</th>
+                <th style="padding:6px 8px;text-align:center;">SIDE</th>
+                <th style="padding:6px 8px;text-align:right;">ENTRY</th>
+                <th style="padding:6px 8px;text-align:right;">SHARES</th>
+                <th style="padding:6px 8px;text-align:right;">COST</th>
+                <th style="padding:6px 8px;text-align:right;">MAX P&amp;L</th>
+                <th style="padding:6px 8px;text-align:right;">ENDS</th>
+                <th style="padding:6px 8px;text-align:center;">&#8599;</th>
+              </tr>
+            </thead>
+            <tbody>{rows_html}
+            </tbody>
+          </table>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+            '// NO OPEN POSITIONS</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+    # --- Trade History Table ---
+    st.markdown(f'<div class="section-hdr">// TRADE HISTORY [{len(history)} CLOSED]</div>', unsafe_allow_html=True)
+
+    if history:
+        rows_html = ""
+        for pos in reversed(history):
+            exit_price = pos.get("exit_price") or 0.0
+            pnl_val = pos.get("pnl", 0) or 0
+            # Determine result badge
+            if 0.01 <= exit_price <= 0.99:
+                result_badge = (
+                    f'<span style="background:#ffaa0025;color:{C_WARNING};border:1px solid #ffaa0040;'
+                    f'border-radius:3px;padding:1px 6px;font-size:0.6rem;">@{exit_price:.2f}</span>'
+                )
+            elif pnl_val > 0:
+                result_badge = (
+                    '<span style="background:#00ff4125;color:#00ff41;border:1px solid #00ff4140;'
+                    'border-radius:3px;padding:1px 6px;font-size:0.6rem;">WIN &#9650;</span>'
+                )
+            else:
+                result_badge = (
+                    '<span style="background:#ff004425;color:#ff0044;border:1px solid #ff004440;'
+                    'border-radius:3px;padding:1px 6px;font-size:0.6rem;">LOSS &#9660;</span>'
+                )
+            question = pos.get("question", "")[:50]
+            side = pos.get("side", "")
+            side_color = C_PRIMARY if side == "YES" else C_DANGER
+            entry = pos.get("entry_price", 0)
+            pnl_color = C_PRIMARY if pnl_val >= 0 else C_DANGER
+            closed_at_raw = pos.get("closed_at", "")
+            try:
+                closed_dt = pd.to_datetime(closed_at_raw)
+                closed_str = closed_dt.strftime("%b %d %H:%M")
+            except Exception:
+                closed_str = closed_at_raw[:16] if closed_at_raw else "-"
+            url = build_market_url(pos)
+            rows_html += f"""
+            <tr style="border-bottom:1px solid #00ff4110;">
+              <td style="padding:7px 8px;text-align:center;">{result_badge}</td>
+              <td style="padding:7px 8px;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:240px;">{question}</td>
+              <td style="padding:7px 8px;text-align:center;color:{side_color};">{side}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{entry:.3f}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{exit_price:.3f}</td>
+              <td style="padding:7px 8px;text-align:right;color:{pnl_color};text-shadow:0 0 6px {pnl_color}80;">{fmt_usd(pnl_val)}</td>
+              <td style="padding:7px 8px;text-align:right;color:#666;">{closed_str}</td>
+              <td style="padding:7px 8px;text-align:center;"><a href="{url}" target="_blank" style="color:#00ff4180;text-decoration:none;font-size:0.75rem;">&#8599;</a></td>
+            </tr>"""
+        st.markdown(f"""
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
+            <thead>
+              <tr style="border-bottom:1px solid #00ff4130;color:#00ff4160;font-size:0.55rem;letter-spacing:0.08em;">
+                <th style="padding:6px 8px;text-align:center;">RESULT</th>
+                <th style="padding:6px 8px;text-align:left;">MARKET</th>
+                <th style="padding:6px 8px;text-align:center;">SIDE</th>
+                <th style="padding:6px 8px;text-align:right;">ENTRY</th>
+                <th style="padding:6px 8px;text-align:right;">EXIT</th>
+                <th style="padding:6px 8px;text-align:right;">P&amp;L</th>
+                <th style="padding:6px 8px;text-align:right;">CLOSED</th>
+                <th style="padding:6px 8px;text-align:center;">&#8599;</th>
+              </tr>
+            </thead>
+            <tbody>{rows_html}
+            </tbody>
+          </table>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+            '// NO CLOSED TRADES YET</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+    # --- P&L Distribution Chart ---
+    st.markdown('<div class="section-hdr">// P&L DISTRIBUTION</div>', unsafe_allow_html=True)
+
+    if history:
+        pnl_values = [p.get("pnl", 0) or 0 for p in history]
+        bar_colors = [C_PRIMARY if v >= 0 else C_DANGER for v in pnl_values]
+        hover_texts = [
+            f"{p.get('question', '')[:40]}<br>{fmt_usd(p.get('pnl', 0) or 0)}"
+            for p in history
+        ]
+        fig_pnl = go.Figure()
+        fig_pnl.add_trace(go.Bar(
+            x=list(range(len(pnl_values))),
+            y=pnl_values,
+            marker_color=bar_colors,
+            hovertext=hover_texts,
+            hoverinfo="text",
+            showlegend=False,
+        ))
+        layout = plotly_theme()
+        layout.update({
+            "height": 200,
+            "showlegend": False,
+            "shapes": [{
+                "type": "line",
+                "xref": "paper", "x0": 0, "x1": 1,
+                "yref": "y", "y0": 0, "y1": 0,
+                "line": {"color": "#ffffff25", "width": 1},
+            }],
+            "yaxis": {**layout.get("yaxis", {}), "tickprefix": "$"},
+            "xaxis": {**layout.get("xaxis", {}), "showticklabels": False},
+        })
+        fig_pnl.update_layout(**layout)
+        st.plotly_chart(fig_pnl, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.markdown(
+            '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+            '// NO TRADE DATA</div>',
+            unsafe_allow_html=True,
+        )
 
 # ---------------------------------------------------------------------------
 # TAB: ANALYTICS (Task 6)
