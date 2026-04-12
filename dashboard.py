@@ -859,7 +859,262 @@ with tab_positions:
 # ---------------------------------------------------------------------------
 
 with tab_analytics:
-    st.markdown('<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">// ANALYTICS TAB — COMING SOON</div>', unsafe_allow_html=True)
+
+    # ── Strategy Expectancy ──────────────────────────────────────────────────
+    st.markdown('<div class="section-hdr">// STRATEGY EXPECTANCY</div>', unsafe_allow_html=True)
+
+    strat_data = strategy_report.get("by_strategy") or {}
+
+    if strat_data:
+        NEON_COLORS = ["#00ff41", "#ffaa00", "#ff0044", "#00e5ff", "#ff00ff", "#ffffff"]
+        strat_names = list(strat_data.keys())
+        strat_trades = [strat_data[s].get("trades", 0) for s in strat_names]
+        total_trade_count = sum(strat_trades)
+        slice_colors = [NEON_COLORS[i % len(NEON_COLORS)] for i in range(len(strat_names))]
+
+        col_donut, col_legend = st.columns([1, 1])
+
+        with col_donut:
+            fig_donut = go.Figure(go.Pie(
+                labels=strat_names,
+                values=strat_trades,
+                hole=0.6,
+                marker=dict(
+                    colors=slice_colors,
+                    line=dict(color="#000000", width=2),
+                ),
+                textinfo="none",
+                hovertemplate="%{label}<br>%{value} trades (%{percent})<extra></extra>",
+            ))
+            fig_donut.add_annotation(
+                text=f"<b>{total_trade_count}</b><br><span style='font-size:10px'>TRADES</span>",
+                x=0.5, y=0.5,
+                font=dict(family="Courier New, monospace", color="#00ff41", size=18),
+                showarrow=False,
+            )
+            fig_donut.update_layout(
+                **plotly_theme(),
+                height=260,
+                showlegend=False,
+            )
+            st.plotly_chart(fig_donut, use_container_width=True, config={"displayModeBar": False})
+
+        with col_legend:
+            legend_html = ""
+            for i, sname in enumerate(strat_names):
+                s = strat_data[sname]
+                color = NEON_COLORS[i % len(NEON_COLORS)]
+                wr = s.get("win_rate", 0) or 0
+                n_trades = s.get("trades", 0) or 0
+                avg_pnl = s.get("avg_pnl", 0) or 0
+                pnl_col = "#00ff41" if avg_pnl >= 0 else "#ff0044"
+                legend_html += f"""
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                  <div style="width:12px;height:12px;background:{color};box-shadow:0 0 6px {color};flex-shrink:0;"></div>
+                  <div>
+                    <div style="font-size:0.7rem;color:#ccc;font-weight:600;">{sname}</div>
+                    <div style="font-size:0.6rem;color:#00ff4160;">
+                      WR {wr:.1f}% &nbsp;·&nbsp; {n_trades} trades &nbsp;·&nbsp;
+                      <span style="color:{pnl_col};">avg {fmt_usd(avg_pnl)}</span>
+                    </div>
+                  </div>
+                </div>"""
+            st.markdown(f'<div style="padding:10px 0;">{legend_html}</div>', unsafe_allow_html=True)
+
+        # Strategy table
+        tbl_rows = ""
+        for sname, s in strat_data.items():
+            wr = s.get("win_rate", 0) or 0
+            wr_col = "#00ff41" if wr >= 50 else "#ff0044"
+            avg_pnl_v = s.get("avg_pnl", 0) or 0
+            total_pnl_v = s.get("total_pnl", 0) or 0
+            avg_edge_v = s.get("avg_edge_pct", 0) or 0
+            avg_ai_v = s.get("avg_ai_confidence", 0) or 0
+            pnl_col = "#00ff41" if avg_pnl_v >= 0 else "#ff0044"
+            tot_col = "#00ff41" if total_pnl_v >= 0 else "#ff0044"
+            tbl_rows += f"""
+            <tr style="border-bottom:1px solid #00ff4110;">
+              <td style="padding:7px 8px;color:#ccc;">{sname}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{s.get("trades", 0)}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{s.get("resolved_trades", 0)}</td>
+              <td style="padding:7px 8px;text-align:right;color:{wr_col};text-shadow:0 0 6px {wr_col}80;">{wr:.1f}%</td>
+              <td style="padding:7px 8px;text-align:right;color:{pnl_col};text-shadow:0 0 6px {pnl_col}80;">{fmt_usd(avg_pnl_v)}</td>
+              <td style="padding:7px 8px;text-align:right;color:{tot_col};text-shadow:0 0 6px {tot_col}80;">{fmt_usd(total_pnl_v)}</td>
+              <td style="padding:7px 8px;text-align:right;color:#00e5ff;">{avg_edge_v:.1f}%</td>
+              <td style="padding:7px 8px;text-align:right;color:#ff00ff;">{avg_ai_v:.1f}%</td>
+            </tr>"""
+        st.markdown(f"""
+        <div style="overflow-x:auto;margin-top:12px;">
+          <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
+            <thead>
+              <tr style="border-bottom:1px solid #00ff4130;color:#00ff4160;font-size:0.55rem;letter-spacing:0.08em;">
+                <th style="padding:6px 8px;text-align:left;">STRATEGY</th>
+                <th style="padding:6px 8px;text-align:right;">TRADES</th>
+                <th style="padding:6px 8px;text-align:right;">RESOLVED</th>
+                <th style="padding:6px 8px;text-align:right;">WIN RATE</th>
+                <th style="padding:6px 8px;text-align:right;">AVG P&amp;L</th>
+                <th style="padding:6px 8px;text-align:right;">TOTAL P&amp;L</th>
+                <th style="padding:6px 8px;text-align:right;">AVG EDGE</th>
+                <th style="padding:6px 8px;text-align:right;">AVG AI</th>
+              </tr>
+            </thead>
+            <tbody>{tbl_rows}
+            </tbody>
+          </table>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+            '// NO STRATEGY DATA YET</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+    # ── Shadow Fill Report ───────────────────────────────────────────────────
+    st.markdown('<div class="section-hdr">// SHADOW FILL REPORT</div>', unsafe_allow_html=True)
+
+    shadow_by_strat = shadow_report.get("by_strategy") or {}
+    shadow_recent = shadow_report.get("recent_resolved") or []
+
+    if shadow_by_strat:
+        shadow_rows = ""
+        for sname, s in shadow_by_strat.items():
+            wr_s = s.get("win_rate", 0) or 0
+            wr_col = "#00ff41" if wr_s >= 50 else "#ff0044"
+            exp = s.get("expected_value_per_dollar", s.get("exp_per_dollar", 0)) or 0
+            exp_col = "#00ff41" if exp >= 0 else "#ff0044"
+            avg_edge_s = s.get("avg_edge_pct", 0) or 0
+            shadow_rows += f"""
+            <tr style="border-bottom:1px solid #00ff4110;">
+              <td style="padding:7px 8px;color:#ccc;">{sname}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{s.get("total_signals", s.get("signals", 0))}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{s.get("resolved", 0)}</td>
+              <td style="padding:7px 8px;text-align:right;color:#aaa;">{s.get("open", 0)}</td>
+              <td style="padding:7px 8px;text-align:right;color:{wr_col};text-shadow:0 0 6px {wr_col}80;">{wr_s:.1f}%</td>
+              <td style="padding:7px 8px;text-align:right;color:{exp_col};text-shadow:0 0 6px {exp_col}80;">{exp:+.3f}</td>
+              <td style="padding:7px 8px;text-align:right;color:#00e5ff;">{avg_edge_s:.1f}%</td>
+            </tr>"""
+        st.markdown(f"""
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-family:monospace;font-size:0.65rem;">
+            <thead>
+              <tr style="border-bottom:1px solid #00ff4130;color:#00ff4160;font-size:0.55rem;letter-spacing:0.08em;">
+                <th style="padding:6px 8px;text-align:left;">STRATEGY</th>
+                <th style="padding:6px 8px;text-align:right;">SIGNALS</th>
+                <th style="padding:6px 8px;text-align:right;">RESOLVED</th>
+                <th style="padding:6px 8px;text-align:right;">OPEN</th>
+                <th style="padding:6px 8px;text-align:right;">WIN RATE</th>
+                <th style="padding:6px 8px;text-align:right;">EXP / $1</th>
+                <th style="padding:6px 8px;text-align:right;">AVG EDGE</th>
+              </tr>
+            </thead>
+            <tbody>{shadow_rows}
+            </tbody>
+          </table>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+            '// NO SHADOW DATA</div>',
+            unsafe_allow_html=True,
+        )
+
+    if shadow_recent:
+        st.markdown('<div style="font-size:0.55rem;color:#00ff4160;letter-spacing:2px;margin:14px 0 6px 0;">RECENT RESOLVED</div>', unsafe_allow_html=True)
+        recent_rows = ""
+        for item in shadow_recent:
+            pnl_per_dollar = item.get("pnl_per_dollar", 0) or 0
+            pnl_col = "#00ff41" if pnl_per_dollar >= 0 else "#ff0044"
+            question = (item.get("question") or "")[:50]
+            strat_label = item.get("strategy_type", "-")
+            resolved_at = (item.get("resolved_at") or "")[:16]
+            url = item.get("market_url", "")
+            link_html = (
+                f'<a href="{url}" target="_blank" style="color:#00ff4180;text-decoration:none;font-size:0.75rem;">&#8599;</a>'
+                if url else ""
+            )
+            recent_rows += f"""
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.65rem;border-bottom:1px solid #00ff4108;">
+              <span style="color:#00ff4160;flex-shrink:0;width:80px;">{strat_label[:12]}</span>
+              <span style="color:#ccc;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{question}</span>
+              <span style="color:{pnl_col};text-shadow:0 0 6px {pnl_col}80;flex-shrink:0;width:60px;text-align:right;">{pnl_per_dollar:+.3f}</span>
+              <span style="color:#666;flex-shrink:0;width:90px;text-align:right;">{resolved_at}</span>
+              <span style="flex-shrink:0;width:16px;text-align:center;">{link_html}</span>
+            </div>"""
+        st.markdown(f'<div style="border:1px solid #00ff4120;padding:8px 10px;background:#00ff4105;">{recent_rows}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="sep"></div>', unsafe_allow_html=True)
+
+    # ── AI Usage + Realtime Feed ─────────────────────────────────────────────
+    col_ai, col_feed = st.columns(2)
+
+    with col_ai:
+        st.markdown('<div class="section-hdr">// AI USAGE</div>', unsafe_allow_html=True)
+        if ai_stats:
+            total_calls = ai_stats.get("total_calls", 0) or 0
+            est_cost = ai_stats.get("estimated_cost_usd", 0) or 0
+            in_tok = ai_stats.get("total_input_tokens", 0) or 0
+            out_tok = ai_stats.get("total_output_tokens", 0) or 0
+            model_name = ai_stats.get("model", "—")
+            in_price = getattr(config, "AI_INPUT_PRICE_PER_MTOK", 0)
+            out_price = getattr(config, "AI_OUTPUT_PRICE_PER_MTOK", 0)
+            cards_ai = st.columns(2)
+            with cards_ai[0]:
+                st.markdown(neon_stat_card(
+                    "TOTAL CALLS",
+                    f"{total_calls:,}",
+                    model_name,
+                    "c-green",
+                ), unsafe_allow_html=True)
+            with cards_ai[1]:
+                st.markdown(neon_stat_card(
+                    "EST. COST",
+                    f"${est_cost:.4f}",
+                    f"in {in_tok:,} · out {out_tok:,} tok",
+                    "c-amber",
+                ), unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+                '// NO AI DATA</div>',
+                unsafe_allow_html=True,
+            )
+
+    with col_feed:
+        st.markdown('<div class="section-hdr">// REALTIME FEED</div>', unsafe_allow_html=True)
+        if feed_status:
+            connected = feed_status.get("connected", False)
+            watched = feed_status.get("watched_assets", 0) or 0
+            cache_size = feed_status.get("quote_cache_size", 0) or 0
+            msg_count = feed_status.get("message_count", 0) or 0
+            reconnects = feed_status.get("reconnect_count", 0) or 0
+            max_assets = getattr(config, "REALTIME_MARKET_WS_MAX_ASSETS", "—")
+            status_label = "CONNECTED" if connected else "DISCONNECTED"
+            status_col = "c-green" if connected else "c-red"
+            cards_feed = st.columns(2)
+            with cards_feed[0]:
+                st.markdown(neon_stat_card(
+                    "FEED STATUS",
+                    status_label,
+                    f"{watched}/{max_assets} assets · {cache_size} cached",
+                    status_col,
+                ), unsafe_allow_html=True)
+            with cards_feed[1]:
+                st.markdown(neon_stat_card(
+                    "WIRE TRAFFIC",
+                    f"{msg_count:,}",
+                    f"{reconnects} reconnect(s)",
+                    "c-white",
+                ), unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div style="color:#00ff4140;font-size:0.7rem;padding:20px 0;text-align:center">'
+                '// FEED OFFLINE</div>',
+                unsafe_allow_html=True,
+            )
 
 # ---------------------------------------------------------------------------
 # TAB: RISK (Task 7)
