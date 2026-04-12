@@ -322,16 +322,37 @@ class ShadowTracker:
     def log_summary(self) -> None:
         report = self.build_report()
         overview = report.get("overview", {})
-        parts = [
-            f"signals={overview.get('signals', 0)}",
-            f"resolved={overview.get('resolved_signals', 0)}",
-            f"open={overview.get('open_signals', 0)}",
-        ]
+        total = overview.get('signals', 0)
+        resolved = overview.get('resolved_signals', 0)
+        open_count = overview.get('open_signals', 0)
+
+        lines = [f"Shadow signals: {total} total, {resolved} resolved, {open_count} open"]
+
         by_strategy = report.get("by_strategy", {})
         for strategy in sorted(by_strategy):
-            summary = by_strategy[strategy]
-            parts.append(
-                f"{strategy}:n={summary.get('signals', 0)} "
-                f"exp=${summary.get('avg_pnl_per_dollar', 0.0):+.3f}/$1"
-            )
-        logger.info("Shadow report: " + " | ".join(parts))
+            s = by_strategy[strategy]
+            n = s.get('signals', 0)
+            exp = s.get('avg_pnl_per_dollar', 0.0)
+            wr = s.get('win_rate', 0.0)
+            res = s.get('resolved_signals', 0)
+            line = f"  {strategy}: {n} signals"
+            if res > 0:
+                line += f"  win={wr:.0f}%  exp=${exp:+.3f}/$1"
+
+            # Price bucket breakdown
+            buckets = s.get('by_price_bucket', {})
+            if buckets:
+                bucket_parts = []
+                for bucket, bd in sorted(buckets.items()):
+                    bn = bd.get('signals', 0)
+                    br = bd.get('resolved', 0)
+                    bw = bd.get('win_rate', 0.0)
+                    bp = bd.get('avg_pnl', 0.0)
+                    part = f"{bucket}:{bn}"
+                    if br > 0:
+                        part += f"({bw:.0f}%)"
+                    bucket_parts.append(part)
+                line += f"  [{' '.join(bucket_parts)}]"
+            lines.append(line)
+
+        logger.info("\n".join(lines))

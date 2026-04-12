@@ -881,21 +881,23 @@ class Portfolio:
         realized_bankroll = current + open_cost
         daily_pnl = realized_bankroll - day_start
         daily_pct = (daily_pnl / day_start * 100) if day_start > 0 else 0.0
-        daily_tag = "WIN" if daily_pnl >= 0 else "LOSS"
-        limit_pct = config.DAILY_LOSS_LIMIT_PCT * 100
+        daily_icon = "+" if daily_pnl >= 0 else "-"
+        total_pnl = m.get('total_pnl', 0)
+        win_rate = m.get('win_rate', 0)
+        total_trades = m.get('total_trades', 0)
+        roi = m.get('roi_pct', 0)
+        n_open = len(self.state.open_positions)
+        wins = self.state.consecutive_wins
+        losses = self.state.consecutive_losses
+
         logger.info(
-            f"┌─ PORTFOLIO ─────────────────────────────────────\n"
-            f"│  Bankroll : ${current:.2f}  "
-            f"(peak ${self.state.peak_bankroll:.2f})\n"
-            f"│  Today    : [{daily_tag}] ${daily_pnl:+.2f} ({daily_pct:+.1f}%)  "
-            f"limit -{limit_pct:.0f}%\n"
-            f"│  Trades   : {m.get('total_trades', 0)} total | "
-            f"win rate {m.get('win_rate', 0):.1f}%\n"
-            f"│  ROI      : {m.get('roi_pct', 0):+.1f}% | "
-            f"P&L ${m.get('total_pnl', 0):+.2f}\n"
-            f"│  Open pos : {len(self.state.open_positions)} | "
-            f"streak W{self.state.consecutive_wins}/L{self.state.consecutive_losses}\n"
-            f"└─────────────────────────────────────────────────"
+            f"+-- PORTFOLIO ------------------------------------\n"
+            f"|  Bankroll   ${current:>10.2f}    peak ${self.state.peak_bankroll:.2f}\n"
+            f"|  Today      ${daily_pnl:>+10.2f}  ({daily_pct:+.1f}%)\n"
+            f"|  All-time   ${total_pnl:>+10.2f}  ({roi:+.1f}% ROI)\n"
+            f"|  Trades     {total_trades:>10}    win rate {win_rate:.0f}%\n"
+            f"|  Open       {n_open:>10}    streak W{wins}/L{losses}\n"
+            f"+------------------------------------------------"
         )
 
     # ------------------------------------------------------------------

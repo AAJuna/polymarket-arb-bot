@@ -45,9 +45,11 @@ def startup_checks(
     ai: AIAnalyzer,
 ) -> None:
     """Validate connectivity and credentials before entering the main loop."""
-    logger.info("=" * 60)
-    logger.info("  Polymarket Sports Arbitrage Bot — Starting Up")
-    logger.info("=" * 60)
+    print()
+    print("\033[1;36m" + "=" * 56 + "\033[0m")
+    print("\033[1;36m   POLYMARKET SPORTS ARBITRAGE BOT\033[0m")
+    print("\033[1;36m" + "=" * 56 + "\033[0m")
+    print()
 
     issues = config.validate()
     for issue in issues:
@@ -105,48 +107,46 @@ def startup_checks(
     port.save()
 
     _print_startup_summary(port)
-    logger.info("Startup complete. Entering main loop.\n")
+    logger.info("Startup complete -- entering main loop")
 
 
 def _print_startup_summary(port: Portfolio) -> None:
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    R = "\033[0m"
+
     s = port.state
-    rows = [
-        ["Bankroll", f"${s.current_bankroll:.2f}"],
-        ["Peak bankroll", f"${s.peak_bankroll:.2f}"],
-        ["Open positions", len(s.open_positions)],
-        ["Total trades", s.total_trades],
-        ["Mode", "PAPER" if config.PAPER_TRADING else "LIVE"],
-        ["AI model", config.AI_MODEL],
-        ["Min edge", f"{config.MIN_EDGE_PCT:.1f}%"],
-        ["AI exec cap", config.AI_MAX_CANDIDATES],
-        ["AI scan limit", max(config.AI_MAX_CANDIDATES, config.AI_SCAN_LIMIT)],
-        ["AI min edge", f"{config.AI_MIN_EDGE_PCT:.1f}%"],
-        ["Min AI confidence", f"{config.MIN_AI_CONFIDENCE:.0%}"],
-        ["AI paper mode", config.AI_PAPER_MODE if config.PAPER_TRADING else "gate"],
-        ["Strategies", f"same={config.ENABLE_SAME_MARKET_ARB} same_exec={config.ENABLE_SAME_MARKET_EXECUTION} cross={config.ENABLE_CROSS_MARKET_ARB} odds={config.ENABLE_ODDS_COMPARISON_ARB}"],
-        ["Bet size", f"{config.BET_SIZE_PCT:.1f}% of bankroll"],
-        ["Max bet", f"${config.MAX_BET_SIZE:.2f}"],
-        ["Poll interval", f"{config.POLL_INTERVAL}s"],
-        [
-            "Realtime feed",
-            (
-                f"on ({config.REALTIME_MARKET_WS_MAX_ASSETS} assets, "
-                f"{config.REALTIME_MARKET_WS_MAX_HOURS_TO_EXPIRY:.0f}h window)"
-                if config.REALTIME_MARKET_WS_ENABLED
-                else "off"
-            ),
-        ],
-        [
-            "Realtime gate",
-            (
-                f"on (spread<={config.REALTIME_GATE_MAX_SPREAD:.2f}, "
-                f"depth>={config.REALTIME_GATE_MIN_DEPTH_USD:.2f})"
-                if config.ENABLE_REALTIME_EXECUTION_GATE
-                else "off"
-            ),
-        ],
-    ]
-    print(tabulate(rows, tablefmt="simple"))
+    mode = f"{GREEN}PAPER{R}" if config.PAPER_TRADING else f"{YELLOW}LIVE{R}"
+
+    strategies = []
+    if config.ENABLE_ODDS_COMPARISON_ARB:
+        strategies.append("odds-comparison")
+    if config.ENABLE_SAME_MARKET_ARB:
+        strategies.append("same-market" + ("" if config.ENABLE_SAME_MARKET_EXECUTION else " (detect only)"))
+    if config.ENABLE_CROSS_MARKET_ARB:
+        strategies.append("cross-market")
+
+    rt_label = (
+        f"ON ({config.REALTIME_MARKET_WS_MAX_ASSETS} assets)"
+        if config.REALTIME_MARKET_WS_ENABLED else "OFF"
+    )
+
+    print(f"""
+{DIM}{'─' * 56}{R}
+  {BOLD}Mode{R}          {mode}
+  {BOLD}Bankroll{R}      ${s.current_bankroll:.2f}  {DIM}(peak ${s.peak_bankroll:.2f}){R}
+  {BOLD}Open{R}          {len(s.open_positions)} positions  {DIM}({s.total_trades} total trades){R}
+  {BOLD}AI{R}            {config.AI_MODEL}  {DIM}(conf>={config.MIN_AI_CONFIDENCE:.0%}){R}
+  {BOLD}Strategies{R}    {', '.join(strategies) or 'none'}
+  {BOLD}Edge{R}          min {config.MIN_EDGE_PCT:.1f}%  {DIM}(AI min {config.AI_MIN_EDGE_PCT:.1f}%){R}
+  {BOLD}Sizing{R}        {config.BET_SIZE_PCT:.1f}% base  {DIM}(max ${config.MAX_BET_SIZE:.0f}, Kelly-adjusted){R}
+  {BOLD}Min price{R}     ${config.ODDS_COMPARISON_MIN_PRICE:.2f}  {DIM}(min {config.MIN_BOOKMAKER_COUNT} bookmakers){R}
+  {BOLD}Realtime{R}      {rt_label}  {DIM}(poll {config.POLL_INTERVAL}s){R}
+{DIM}{'─' * 56}{R}
+""")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -382,9 +382,9 @@ def run() -> None:
                     # A position resolved — re-evaluate, may allow new entries
                     trading_blocked, block_reason = risk.is_globally_blocked()
                     logger.info(
-                        f"━━ CYCLE {cycle:>4} ━━ {closed_count} position(s) resolved — "
-                        f"{'resuming trading' if not trading_blocked else f'still blocked ({block_reason})'} | "
-                        f"bankroll=${port.state.current_bankroll:.2f} | open={open_after}"
+                        f"== CYCLE {cycle:>4} ==  {closed_count} resolved -- "
+                        f"{'resuming' if not trading_blocked else f'blocked ({block_reason})'} | "
+                        f"${port.state.current_bankroll:.2f} | {open_after} open"
                     )
 
                 if trading_blocked:
@@ -400,7 +400,7 @@ def run() -> None:
                         dedupe_key=f"global_block:{block_reason}",
                     )
                     logger.info(
-                        f"━━ CYCLE {cycle:>4} ━━ IDLE ({block_reason}) | "
+                        f"== CYCLE {cycle:>4} ━━ IDLE ({block_reason}) | "
                         f"bankroll=${port.state.current_bankroll:.2f} | "
                         f"open={len(port.state.open_positions)}"
                     )
@@ -472,12 +472,12 @@ def run() -> None:
                     filtered.append((opp, verified_at))
 
                 logger.info(
-                    f"━━ CYCLE {cycle:>4} ━━ "
-                    f"markets={len(markets)} | "
-                    f"opps={len(opportunities)} | "
-                    f"queued={len(filtered)} | "
-                    f"bankroll=${port.state.current_bankroll:.2f} | "
-                    f"open={len(port.state.open_positions)}"
+                    f"== CYCLE {cycle:>4} ━━  "
+                    f"${port.state.current_bankroll:.2f}  "
+                    f"{len(markets)} mkts  "
+                    f"{len(opportunities)} opps  "
+                    f"{len(filtered)} queued  "
+                    f"{len(port.state.open_positions)} open"
                 )
 
                 if (
@@ -619,22 +619,23 @@ def run() -> None:
                         )
 
                 if validated:
-                    logger.info(f"  ✓ {len(validated)} passed AI validation → executing")
-                elif advisory_block_count:
-                    logger.info(
-                        f"  ✗ 0/{len(filtered)} passed AI validation "
-                        f"({advisory_block_count} advisory candidate(s) blocked by hard guardrails)"
-                    )
-                elif not filtered:
-                    logger.info(
-                        "  no AI candidates after filters "
-                        f"(same_market_exec_disabled={skipped_same_market_count}, "
-                        f"already_open={skipped_open_count}, "
-                        f"below_edge={skipped_edge_count}, "
-                        f"closed_or_inactive={skipped_closed_count})"
-                    )
+                    logger.info(f"  AI: {len(validated)}/{len(filtered)} passed -> executing")
+                elif filtered:
+                    if advisory_block_count:
+                        logger.info(f"  AI: 0/{len(filtered)} passed ({advisory_block_count} advisory-blocked)")
+                    else:
+                        logger.info(f"  AI: 0/{len(filtered)} passed")
                 else:
-                    logger.info(f"  ✗ 0/{len(filtered)} passed AI validation")
+                    skip_parts = []
+                    if skipped_same_market_count:
+                        skip_parts.append(f"{skipped_same_market_count} same-mkt")
+                    if skipped_open_count:
+                        skip_parts.append(f"{skipped_open_count} open")
+                    if skipped_edge_count:
+                        skip_parts.append(f"{skipped_edge_count} low-edge")
+                    if skipped_closed_count:
+                        skip_parts.append(f"{skipped_closed_count} closed")
+                    logger.info(f"  No candidates ({', '.join(skip_parts) or 'none matched'})")
 
                 # 5. Execute
                 trades_placed = 0
@@ -696,7 +697,7 @@ def run() -> None:
                         open_market_ids.add(opp.market_id)
 
                 if trades_placed:
-                    logger.info(f"  → {trades_placed} trade(s) placed this cycle")
+                    logger.info(f"  {trades_placed} trade(s) placed this cycle")
 
                 # 6. Check resolved markets
                 port.check_resolutions()
@@ -706,7 +707,7 @@ def run() -> None:
             # blocked — existing positions should be managed regardless.
             early_exits = port.check_early_exits()
             if early_exits:
-                logger.info(f"  → {early_exits} position(s) exited early")
+                logger.info(f"  {early_exits} position(s) exited early")
                 comp.update(port.state)
 
             # 7. Periodic bankroll sync (every ~60 seconds)

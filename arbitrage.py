@@ -676,17 +676,12 @@ def _find_odds_comparison_opportunities(markets: list[MarketData]) -> list[Oppor
         ))
 
     logger.info(
-        "Odds comparison filters: "
-        f"markets={stats['markets']} "
-        f"non_moneyline={stats['non_moneyline']} "
-        f"unsupported={stats['unsupported_market']} "
-        f"matched={stats['matched']} "
-        f"no_match={stats['no_odds_match']} "
-        f"low_conf={stats['low_confidence']} "
-        f"ambiguous={stats['ambiguous_side']} "
-        f"low_price={stats['low_price']} "
-        f"below_edge={stats['below_edge']} "
-        f"emitted={stats['emitted']}"
+        f"Odds filter: {stats['markets']} in "
+        f"→ {stats['matched']} matched "
+        f"→ {stats['emitted']} emitted  "
+        f"(skip: {stats['non_moneyline']}nm {stats['no_odds_match']}noMatch "
+        f"{stats['low_confidence']}conf {stats['below_edge']}edge "
+        f"{stats['low_price']}price)"
     )
     return opps
 
@@ -717,8 +712,7 @@ def find_opportunities(markets: list[MarketData]) -> list[Opportunity]:
     result = sorted(seen.values(), key=lambda o: (o.value_score, o.edge_pct), reverse=True)
 
     logger.info(
-        f"Arbitrage scan: {len(a_opps)} same-market, "
-        f"{len(b_opps)} cross-market, {len(c_opps)} odds-comparison "
-        f"→ {len(result)} unique opportunities"
+        f"Scan: {len(result)} opps "
+        f"(same={len(a_opps)} cross={len(b_opps)} odds={len(c_opps)})"
     )
     return result

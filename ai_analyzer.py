@@ -218,12 +218,12 @@ class AIAnalyzer:
             if not analysis.is_valid:
                 self._skip_cache.set(cache_key, analysis)
 
+            verdict = "\033[32mPASS\033[0m" if analysis.is_valid else "\033[33mSKIP\033[0m"
             logger.info(
-                f"AI: {opp.question[:45]} | "
-                f"conf={analysis.confidence:.2f} "
-                f"side={analysis.recommended_side} "
-                f"edge={analysis.edge_detected} "
-                f"({'PASS' if analysis.is_valid else 'SKIP'})"
+                f"AI [{verdict}] {opp.question[:40]}  "
+                f"conf={analysis.confidence:.0%}  "
+                f"side={analysis.recommended_side}  "
+                f"edge={'Y' if analysis.edge_detected else 'N'}"
             )
             return analysis
 

@@ -261,14 +261,16 @@ class RealtimeMarketFeed:
         if not self.enabled:
             return
         status = self.status_snapshot()
-        last_message_age = status.get("last_message_age_seconds")
-        last_message_label = f"{last_message_age:.1f}s" if last_message_age is not None else "n/a"
+        connected = status['connected']
+        watched = status['watched_assets']
+        msgs = status['message_count']
+        reconnects = status['reconnect_count']
+        last_age = status.get("last_message_age_seconds")
+        age_label = f"{last_age:.0f}s ago" if last_age is not None else "n/a"
+        conn_icon = "OK" if connected else "DOWN"
         logger.info(
-            "Realtime feed: "
-            f"connected={status['connected']} watched={status['watched_assets']} "
-            f"quotes={status['quote_cache_size']} messages={status['message_count']} "
-            f"reconnects={status['reconnect_count']} "
-            f"last_message={last_message_label}"
+            f"WS feed: {conn_icon}  {watched} assets  "
+            f"{msgs} msgs  last={age_label}  reconn={reconnects}"
         )
         self._persist_status(force=True)
 
