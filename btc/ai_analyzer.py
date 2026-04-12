@@ -202,20 +202,22 @@ SUMMARY:
 - High: ${high:,.2f}  Low: ${low:,.2f}  Range: ${high-low:,.2f}
 
 TASK:
-Analyze the price data and determine if BTC will be UP or DOWN at the end of this 5-minute window compared to the start price.
+You MUST pick UP or DOWN. Analyze the 60-second price data and predict whether BTC will finish UP or DOWN relative to the start of this 5-minute window.
 
-Choose your own strategy based on what the data shows:
-- momentum: price trending clearly in one direction
-- mean_reversion: price moved too far too fast, likely to reverse
-- volatility_breakout: price breaking out of a range
-- trend_following: established trend continuing
-- or describe your own strategy
+Choose your strategy:
+- momentum: price trending in one direction
+- mean_reversion: price overextended, likely to snap back
+- volatility_breakout: breaking out of range
+- trend_following: established direction continuing
+- microstructure: order flow or tick pattern
 
 Rules:
-- Only predict UP or DOWN if you have reasonable confidence
-- SKIP if the data is too noisy or unclear
-- The market price already reflects crowd consensus — you need edge
-- Consider: is the market price wrong? Why?
+- ALWAYS pick UP or DOWN. You are a trader, not an observer.
+- SKIP is only allowed if price is EXACTLY flat AND market is exactly 50/50
+- Set confidence 0.55-0.80 based on signal clarity
+- Even a slight edge is worth trading — this is high-frequency, volume matters
+- The market is often slow to react to micro-trends. Exploit that lag.
+- Be decisive. A 55% edge traded 100 times is very profitable.
 """
 
     @property
