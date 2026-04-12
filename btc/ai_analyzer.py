@@ -173,6 +173,15 @@ class BtcAIAnalyzer:
                 reasoning=str(tool_result.get("reasoning", "")),
             )
 
+            # Strategy filter: block strategies that lose money
+            if analysis.side != "SKIP" and analysis.strategy in cfg.BLOCKED_STRATEGIES:
+                logger.info(
+                    f"AI blocked: strategy '{analysis.strategy}' is blacklisted  "
+                    f"| original={analysis.side} conf={analysis.confidence:.0%}"
+                )
+                analysis.side = "SKIP"
+                analysis.reasoning = f"Blocked strategy: {analysis.strategy}. {analysis.reasoning}"
+
             # Track costs (persisted to disk)
             input_tok = response.usage.input_tokens if response.usage else 200
             output_tok = response.usage.output_tokens if response.usage else 50

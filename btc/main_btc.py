@@ -460,6 +460,19 @@ def run() -> None:
                         strategy=ai_decision.strategy,
                     )
 
+                    # Entry price cap: skip if market price too high (bad risk:reward)
+                    if opp.price > cfg.MAX_ENTRY_PRICE:
+                        logger.info(
+                            f"Price too high: {opp.price:.3f} > {cfg.MAX_ENTRY_PRICE} — skipping"
+                        )
+                        done_condition_ids.add(current_market.condition_id)
+                        engine.reset()
+                        current_market = None
+                        ai_decision = None
+                        scanner.invalidate_cache()
+                        state = State.IDLE
+                        continue
+
                     # Dynamic sizing: scale by confidence
                     conf_mult = 1.0 + (ai_decision.confidence - 0.55) / 0.45 * (cfg.BET_CONFIDENCE_SCALE - 1.0)
                     conf_mult = max(1.0, min(cfg.BET_CONFIDENCE_SCALE, conf_mult))
