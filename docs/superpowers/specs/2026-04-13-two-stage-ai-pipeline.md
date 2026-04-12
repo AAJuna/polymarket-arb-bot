@@ -145,6 +145,31 @@ Existing `AI_MODEL` becomes alias for `AI_DEEP_MODEL` (backward compat).
 - Separate cost tracking: `_filter_calls`, `_filter_cost` vs `_deep_calls`, `_deep_cost`
 - Separate stats files: `data/ai_stats_filter.json` and `data/ai_stats.json`
 
+### Deduplication — No Double Processing
+
+Critical: markets must NOT be filtered or analyzed more than once per window to avoid wasting API costs.
+
+**Cache key:** `{condition_id}:{side}:{type}` (same as current `cache_key` format)
+
+**Two-level dedup cache:**
+- `_filter_cache` (TTLCache, TTL = market end_date or 30 min, whichever is shorter) — stores GPT-4o-mini filter results (PASS/REJECT). If a market was already filtered, return cached result immediately without calling GPT.
+- `_deep_cache` (TTLCache, TTL = market end_date or 30 min) — stores Sonnet analysis results. If a market was already analyzed, return cached result immediately without calling Sonnet.
+- `_filter_reject_cache` (TTLCache, TTL = 60 min) — markets rejected by filter get a longer cooldown so they don't keep getting re-filtered every cycle.
+
+**Flow with dedup:**
+```python
+for opp in filtered:
+    # Stage 1: check filter cache first
+    filter_result = ai.filter(opp)          # returns cached if seen before
+    if not filter_result or not filter_result.passed:
+        continue                            # rejected or error, skip
+
+    # Stage 2: check deep cache first
+    analysis = ai.analyze(opp)              # returns cached if seen before
+```
+
+**Logging:** When cache hit, log `"filter cache hit"` or `"deep cache hit"` so dashboard/logs show dedup is working. No API call = no cost increment.
+
 ### Main Loop Changes (`main.py`)
 
 Current flow (step 4):
@@ -156,9 +181,9 @@ for opp in filtered:
 New flow:
 ```python
 for opp in filtered:
-    filter_result = ai.filter(opp)          # Stage 1: GPT-4o-mini
+    filter_result = ai.filter(opp)          # Stage 1: GPT-4o-mini (cached if seen)
     if filter_result and filter_result.passed:
-        analysis = ai.analyze(opp)          # Stage 2: Sonnet deep
+        analysis = ai.analyze(opp)          # Stage 2: Sonnet deep (cached if seen)
     else:
         # log rejection, continue
 ```
