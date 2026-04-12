@@ -231,14 +231,17 @@ def run() -> None:
     cycle = 0
     last_status_log = 0.0
 
+    last_resolution_check = 0.0
+
     while running:
         cycle += 1
         cycle_start = time.monotonic()
 
         try:
-            # Always check resolutions for any open positions, every cycle
-            if port.state.open_positions:
+            # Check resolutions every 15s (not every cycle — HTTP call is slow)
+            if port.state.open_positions and (cycle_start - last_resolution_check) > 15:
                 port.check_resolutions()
+                last_resolution_check = cycle_start
 
             # ============================================================
             # IDLE: Find next market
@@ -298,11 +301,6 @@ def run() -> None:
                     scanner.invalidate_cache()
                     state = State.IDLE
                     continue
-
-                # Refresh market prices from scanner
-                refreshed = scanner.get_current_window()
-                if refreshed and refreshed.condition_id == current_market.condition_id:
-                    current_market = refreshed
 
                 sig = engine.get_signal(
                     current_market.up_price, current_market.down_price

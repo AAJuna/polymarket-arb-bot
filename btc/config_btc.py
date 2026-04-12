@@ -28,7 +28,7 @@ FUNDER_ADDRESS: str | None = os.getenv("FUNDER_ADDRESS") or None
 # RTDS WebSocket (BTC price feed)
 # ---------------------------------------------------------------------------
 RTDS_WS_URL: str = os.getenv("BTC_RTDS_WS_URL", "wss://ws-live-data.polymarket.com")
-RTDS_PING_INTERVAL: float = float(os.getenv("BTC_RTDS_PING_INTERVAL", "5.0"))
+RTDS_PING_INTERVAL: float = float(os.getenv("BTC_RTDS_PING_INTERVAL", "2.0"))
 RTDS_RECONNECT_BASE: float = 1.0
 RTDS_RECONNECT_MAX: float = 30.0
 
