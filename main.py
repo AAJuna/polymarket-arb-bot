@@ -77,6 +77,23 @@ def startup_checks(
     else:
         logger.warning("  ANTHROPIC_API_KEY not set — AI validation disabled")
 
+    # Test OpenAI API (filter stage)
+    if config.OPENAI_API_KEY:
+        logger.info("Testing OpenAI API connection...")
+        try:
+            import openai as _openai_test
+            test_client = _openai_test.OpenAI(api_key=config.OPENAI_API_KEY)
+            test_client.chat.completions.create(
+                model=config.AI_FILTER_MODEL,
+                max_tokens=5,
+                messages=[{"role": "user", "content": "Say OK"}],
+            )
+            logger.info(f"  OpenAI API OK — model={config.AI_FILTER_MODEL}")
+        except Exception as e:
+            logger.warning(f"  OpenAI API test failed: {e} — filter stage disabled")
+    else:
+        logger.info("  OPENAI_API_KEY not set — filter stage disabled, all candidates go to deep analysis")
+
     # Load portfolio
     port.load()
 
@@ -138,7 +155,8 @@ def _print_startup_summary(port: Portfolio) -> None:
   {BOLD}Mode{R}          {mode}
   {BOLD}Bankroll{R}      ${s.current_bankroll:.2f}  {DIM}(peak ${s.peak_bankroll:.2f}){R}
   {BOLD}Open{R}          {len(s.open_positions)} positions  {DIM}({s.total_trades} total trades){R}
-  {BOLD}AI{R}            {config.AI_MODEL}  {DIM}(conf>={config.MIN_AI_CONFIDENCE:.0%}){R}
+  {BOLD}AI filter{R}    {config.AI_FILTER_MODEL}  {DIM}({'ON' if config.OPENAI_API_KEY else 'OFF'}){R}
+  {BOLD}AI deep{R}      {config.AI_DEEP_MODEL}  {DIM}(conf>={config.MIN_AI_CONFIDENCE:.0%}){R}
   {BOLD}Strategies{R}    {', '.join(strategies) or 'none'}
   {BOLD}Edge{R}          min {config.MIN_EDGE_PCT:.1f}%  {DIM}(AI min {config.AI_MIN_EDGE_PCT:.1f}%){R}
   {BOLD}Sizing{R}        {config.BET_SIZE_PCT:.1f}% base  {DIM}(max ${config.MAX_BET_SIZE:.0f}, Kelly-adjusted){R}
@@ -508,12 +526,28 @@ def run() -> None:
                         ),
                     )
 
-                # 4. AI validation
+                # 4. AI validation (2-stage: GPT filter → Sonnet deep)
                 validated = []
                 advisory_block_count = 0
+                filter_reject_count = 0
                 for opp, verified_at in filtered:
                     if len(validated) >= config.AI_MAX_CANDIDATES:
                         break
+
+                    # Stage 1: GPT-4o-mini filter
+                    filter_result = ai.filter(opp)
+                    if filter_result and not filter_result.passed:
+                        filter_reject_count += 1
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="ai_filter",
+                            event="deny",
+                            reason=f"gpt_reject:{filter_result.reason[:50]}",
+                            opp=opp,
+                        )
+                        continue
+
+                    # Stage 2: Sonnet deep analysis
                     analysis = ai.analyze(opp)
                     if analysis is None:
                         risk_journal.record(
@@ -616,6 +650,9 @@ def run() -> None:
                                 "edge_detected": bool(analysis.edge_detected),
                             },
                         )
+
+                if filter_reject_count:
+                    logger.info(f"  GPT filter rejected {filter_reject_count} candidates")
 
                 if validated:
                     logger.info(f"  AI: {len(validated)}/{len(filtered)} passed -> executing")
