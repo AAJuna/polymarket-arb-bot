@@ -12,7 +12,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import anthropic
-import openai
+
+try:
+    import openai
+except ImportError:
+    openai = None  # type: ignore[assignment]
 
 import config
 from logger_setup import get_logger
@@ -105,7 +109,7 @@ class AIAnalyzer:
         self._client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
         self._openai_client = (
             openai.OpenAI(api_key=config.OPENAI_API_KEY)
-            if config.OPENAI_API_KEY
+            if openai and config.OPENAI_API_KEY
             else None
         )
         self._rate_limiter = RateLimiter(calls_per_minute=config.AI_CALLS_PER_MINUTE)
