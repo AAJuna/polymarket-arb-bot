@@ -219,11 +219,13 @@ def _opus_review(results: list[dict], stats: dict) -> Optional[str]:
         import os
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
         if not api_key:
+            logger.warning("Opus review skipped: ANTHROPIC_API_KEY not set")
             return None
 
         from anthropic import Anthropic
         client = Anthropic(api_key=api_key)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Opus review init failed: {e}")
         return None
 
     # Build trade summary for Opus
@@ -276,7 +278,7 @@ Be concise and actionable. Focus on what to CHANGE, not what's working fine."""
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-5-20250514",
+            model="claude-opus-4-6",
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
