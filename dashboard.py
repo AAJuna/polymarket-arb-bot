@@ -1661,7 +1661,7 @@ with tab_btc:
       :root {{--bg:#0a0a0f;--bg2:#0d0d15;--bgc:#0f0f1a;--brd:#1a1a2e;--txt:#e0e0e8;--dim:#3a3a5a;--grn:#00ff88;--red:#ff3366;--blu:#00aaff;--org:#ff8800;--cyn:#00ffcc;}}
       *{{margin:0;padding:0;box-sizing:border-box}}
       body,.terminal{{background:var(--bg);color:var(--txt);font-family:'JetBrains Mono',monospace}}
-      .terminal{{height:720px;display:flex;flex-direction:column}}
+      .terminal{{height:720px;display:flex;flex-direction:column;position:relative}}
       @media (max-width:768px){{
         body,.terminal{{overflow-y:auto;-webkit-overflow-scrolling:touch}}
         .terminal{{height:auto;min-height:100%}}
