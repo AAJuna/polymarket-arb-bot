@@ -182,6 +182,16 @@ class BtcAIAnalyzer:
                 analysis.side = "SKIP"
                 analysis.reasoning = f"Blocked strategy: {analysis.strategy}. {analysis.reasoning}"
 
+            # Confidence filter: skip overconfident trades (0% WR at >70%)
+            if analysis.side != "SKIP" and analysis.confidence > cfg.MAX_AI_CONFIDENCE:
+                logger.info(
+                    f"AI blocked: confidence {analysis.confidence:.0%} > "
+                    f"cap {cfg.MAX_AI_CONFIDENCE:.0%}  "
+                    f"| original={analysis.side} strategy={analysis.strategy}"
+                )
+                analysis.side = "SKIP"
+                analysis.reasoning = f"Overconfident ({analysis.confidence:.0%}). {analysis.reasoning}"
+
             # Track costs (persisted to disk)
             input_tok = response.usage.input_tokens if response.usage else 200
             output_tok = response.usage.output_tokens if response.usage else 50

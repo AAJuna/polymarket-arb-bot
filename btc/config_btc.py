@@ -45,6 +45,7 @@ RTDS_RECONNECT_MAX: float = 30.0
 # ---------------------------------------------------------------------------
 MIN_EDGE_PCT: float = float(os.getenv("BTC_MIN_EDGE_PCT", "3.0"))
 MIN_CONFIDENCE: float = float(os.getenv("BTC_MIN_CONFIDENCE", "0.55"))
+MAX_AI_CONFIDENCE: float = float(os.getenv("BTC_MAX_AI_CONFIDENCE", "0.70"))
 VOLATILITY_LOOKBACK_SEC: int = int(os.getenv("BTC_VOLATILITY_LOOKBACK_SEC", "1800"))
 VOLATILITY_DEFAULT: float = float(os.getenv("BTC_VOLATILITY_DEFAULT", "0.50"))
 VOLATILITY_FLOOR: float = float(os.getenv("BTC_VOLATILITY_FLOOR", "0.20"))
