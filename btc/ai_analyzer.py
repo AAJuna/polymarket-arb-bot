@@ -255,10 +255,9 @@ You MUST pick UP or DOWN. Analyze the 60-second price data and predict whether B
 
 Choose your strategy:
 - momentum: price trending in one direction
-- mean_reversion: price overextended, likely to snap back
 - volatility_breakout: breaking out of range
 - trend_following: established direction continuing
-- microstructure: order flow or tick pattern
+- btc_signal: strong decisive signal from price action
 
 Rules:
 - ALWAYS pick UP or DOWN. You are a trader, not an observer.

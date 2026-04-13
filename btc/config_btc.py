@@ -59,12 +59,15 @@ MOMENTUM_CAP: float = 0.05  # max +/-5% adjustment
 # ---------------------------------------------------------------------------
 MAX_POSITION_SIZE: float = float(os.getenv("BTC_MAX_POSITION_SIZE", "100.0"))
 BET_SIZE_PCT: float = float(os.getenv("BTC_BET_SIZE_PCT", "5.0"))  # base 5% of bankroll
-BET_CONFIDENCE_SCALE: float = 2.0  # at max confidence, bet up to 2x base
+BET_CONFIDENCE_SCALE: float = 1.0  # flat sizing — Haiku confidence inversely correlated with WR
 ENTRY_DEADLINE_SEC: float = float(os.getenv("BTC_ENTRY_DEADLINE_SEC", "180.0"))
 EXIT_BEFORE_END_SEC: float = float(os.getenv("BTC_EXIT_BEFORE_END_SEC", "30.0"))
 MAX_ENTRY_PRICE: float = float(os.getenv("BTC_MAX_ENTRY_PRICE", "0.57"))  # skip if market price > this
 BLOCKED_STRATEGIES: list[str] = [
-    s.strip() for s in os.getenv("BTC_BLOCKED_STRATEGIES", "mean_reversion,microstructure").split(",") if s.strip()
+    s.strip() for s in os.getenv(
+        "BTC_BLOCKED_STRATEGIES",
+        "mean_reversion,microstructure,mean_reversion with momentum confirmation",
+    ).split(",") if s.strip()
 ]
 MAX_CONCURRENT_WINDOWS: int = int(os.getenv("BTC_MAX_CONCURRENT_WINDOWS", "1"))
 
