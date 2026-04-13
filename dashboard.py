@@ -474,34 +474,38 @@ btc_signal = load_json(BTC_SIGNAL_FILE)
 # ---------------------------------------------------------------------------
 
 BTC_REVIEW_FILE = Path("data/btc/strategy_review.json")
+BTC_REVIEW_STATUS_FILE = Path("data/btc/review_status.json")
 
 for _key, _default in [
     ("btc_review_enabled", True),
     ("btc_review_requested", False),
-    ("btc_review_status", None),      # None | "running" | "done"
-    ("btc_review_result", None),
 ]:
     if _key not in st.session_state:
         st.session_state[_key] = _default
 
 
 def _bg_review():
-    """Run trade review in background thread, store result in session_state."""
+    """Run trade review in background thread, write status to file."""
+    status_file = Path("data/btc/review_status.json")
     try:
+        status_file.write_text(json.dumps({"status": "running"}), encoding="utf-8")
         result = btc_run_review()
-        st.session_state["btc_review_result"] = result
-        st.session_state["btc_review_status"] = "done"
+        status_file.write_text(
+            json.dumps({"status": "done", "error": None}), encoding="utf-8"
+        )
     except Exception as e:
-        st.session_state["btc_review_result"] = {"error": str(e)}
-        st.session_state["btc_review_status"] = "done"
+        status_file.write_text(
+            json.dumps({"status": "done", "error": str(e)}), encoding="utf-8"
+        )
 
 
-if st.session_state["btc_review_requested"] and st.session_state["btc_review_status"] != "running":
+if st.session_state["btc_review_requested"]:
     st.session_state["btc_review_requested"] = False
-    st.session_state["btc_review_status"] = "running"
-    st.session_state["btc_review_result"] = None
     t = threading.Thread(target=_bg_review, daemon=True)
     t.start()
+
+# Read review status from file
+_review_file_status = load_json(BTC_REVIEW_STATUS_FILE)
 
 # ---------------------------------------------------------------------------
 # Header
@@ -1870,7 +1874,7 @@ with tab_btc:
 
     # ── AI Review trigger button (Streamlit native — outside iframe) ──
     if st.session_state.get("btc_review_enabled", True):
-        _rev_running = st.session_state.get("btc_review_status") == "running"
+        _rev_running = _review_file_status.get("status") == "running"
         if st.button(
             "ANALYZING..." if _rev_running else "AI REVIEW",
             key="btc_review_btn",
@@ -1880,8 +1884,8 @@ with tab_btc:
             st.rerun()
 
     # ── AI Review Results (inline) ──
-    _rev_status = st.session_state.get("btc_review_status")
-    _rev_result = st.session_state.get("btc_review_result")
+    _rev_status = _review_file_status.get("status")
+    _rev_result = load_json(BTC_REVIEW_FILE) if _rev_status == "done" else None
 
     if _rev_status == "running":
         st.html(
@@ -1895,8 +1899,8 @@ with tab_btc:
             'This may take 10-30 seconds</div></div>'
         )
 
-    elif _rev_status == "done" and _rev_result:
-        _rev_err = _rev_result.get("error")
+    elif _rev_status == "done":
+        _rev_err = _review_file_status.get("error")
         if _rev_err:
             st.html(
                 f'<div style="border:1px solid #ff336630;border-radius:4px;padding:16px;'
@@ -2032,8 +2036,12 @@ with tab_btc:
 
         # Dismiss button
         if st.button("DISMISS REVIEW", key="btc_dismiss_review"):
-            st.session_state["btc_review_status"] = None
-            st.session_state["btc_review_result"] = None
+            try:
+                BTC_REVIEW_STATUS_FILE.write_text(
+                    json.dumps({"status": None}), encoding="utf-8"
+                )
+            except Exception:
+                pass
             st.rerun()
 
 # ---------------------------------------------------------------------------
