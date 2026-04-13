@@ -48,8 +48,8 @@ AI_PAPER_MODE: str = os.getenv("AI_PAPER_MODE", "gate").strip().lower()  # gate 
 # ---------------------------------------------------------------------------
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 AI_FILTER_MODEL: str = os.getenv("AI_FILTER_MODEL", "gpt-4o-mini")
-AI_FILTER_CACHE_TTL: int = 1800   # seconds
-AI_FILTER_REJECT_CACHE_TTL: int = 3600  # seconds
+AI_FILTER_CACHE_TTL: int = int(os.getenv("AI_FILTER_CACHE_TTL", "1800"))
+AI_FILTER_REJECT_CACHE_TTL: int = int(os.getenv("AI_FILTER_REJECT_CACHE_TTL", "3600"))
 
 
 def _ai_pricing_per_mtok(model: str) -> tuple[float, float]:

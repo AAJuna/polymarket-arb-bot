@@ -71,7 +71,7 @@ def startup_checks(
         logger.info("Testing Claude API connection...")
         result = ai.analyze_test()
         if result:
-            logger.info(f"  Claude API OK — model={config.AI_MODEL}")
+            logger.info(f"  Claude API OK — model={config.AI_DEEP_MODEL}")
         else:
             logger.warning("  Claude API test failed — AI validation will be skipped")
     else:
@@ -91,6 +91,7 @@ def startup_checks(
             logger.info(f"  OpenAI API OK — model={config.AI_FILTER_MODEL}")
         except Exception as e:
             logger.warning(f"  OpenAI API test failed: {e} — filter stage disabled")
+            ai._openai_client = None  # actually disable filter
     else:
         logger.info("  OPENAI_API_KEY not set — filter stage disabled, all candidates go to deep analysis")
 
@@ -467,6 +468,7 @@ def run() -> None:
                 ai_scan_limit = max(config.AI_MAX_CANDIDATES, config.AI_SCAN_LIMIT)
                 filtered = []
                 skipped_closed_count = 0
+                filter_reject_count = 0
                 for opp in ranked_candidates:
                     if len(filtered) >= ai_scan_limit:
                         break
@@ -486,6 +488,20 @@ def run() -> None:
                             f"({reason}) | {opp.question[:50]}"
                         )
                         continue
+
+                    # GPT filter — rejected candidates don't count against scan limit
+                    filter_result = ai.filter(opp)
+                    if filter_result and not filter_result.passed:
+                        filter_reject_count += 1
+                        risk_journal.record(
+                            cycle=cycle,
+                            stage="ai_filter",
+                            event="deny",
+                            reason=f"gpt_reject:{filter_result.reason[:50]}",
+                            opp=opp,
+                        )
+                        continue
+
                     filtered.append((opp, verified_at))
 
                 logger.info(
@@ -497,11 +513,15 @@ def run() -> None:
                     f"{len(port.state.open_positions)} open"
                 )
 
+                if filter_reject_count:
+                    logger.info(f"  GPT filter rejected {filter_reject_count} candidates")
+
                 if (
                     skipped_same_market_count
                     or skipped_open_count
                     or skipped_edge_count
                     or skipped_closed_count
+                    or filter_reject_count
                 ):
                     risk_journal.record(
                         cycle=cycle,
@@ -513,6 +533,7 @@ def run() -> None:
                             "already_open": skipped_open_count,
                             "below_edge": skipped_edge_count,
                             "closed_or_inactive": skipped_closed_count,
+                            "gpt_filter_rejected": filter_reject_count,
                             "ranked_candidates": len(ranked_candidates),
                             "queued": len(filtered),
                         },
@@ -526,28 +547,13 @@ def run() -> None:
                         ),
                     )
 
-                # 4. AI validation (2-stage: GPT filter → Sonnet deep)
+                # 4. AI deep validation (candidates already passed GPT filter)
                 validated = []
                 advisory_block_count = 0
-                filter_reject_count = 0
                 for opp, verified_at in filtered:
                     if len(validated) >= config.AI_MAX_CANDIDATES:
                         break
 
-                    # Stage 1: GPT-4o-mini filter
-                    filter_result = ai.filter(opp)
-                    if filter_result and not filter_result.passed:
-                        filter_reject_count += 1
-                        risk_journal.record(
-                            cycle=cycle,
-                            stage="ai_filter",
-                            event="deny",
-                            reason=f"gpt_reject:{filter_result.reason[:50]}",
-                            opp=opp,
-                        )
-                        continue
-
-                    # Stage 2: Sonnet deep analysis
                     analysis = ai.analyze(opp)
                     if analysis is None:
                         risk_journal.record(
@@ -650,9 +656,6 @@ def run() -> None:
                                 "edge_detected": bool(analysis.edge_detected),
                             },
                         )
-
-                if filter_reject_count:
-                    logger.info(f"  GPT filter rejected {filter_reject_count} candidates")
 
                 if validated:
                     logger.info(f"  AI: {len(validated)}/{len(filtered)} passed -> executing")
