@@ -1648,13 +1648,6 @@ with tab_btc:
     _pnl_sign = "+" if _total_pnl >= 0 else ""
     _pnl_color_hex = "#00ff88" if _total_pnl >= 0 else "#ff3366"
 
-    # Review button state
-    _review_enabled = st.session_state.get("btc_review_enabled", True)
-    _review_status = st.session_state.get("btc_review_status")
-    _fab_class = "review-fab running" if _review_status == "running" else "review-fab"
-    _fab_label = "ANALYZING..." if _review_status == "running" else "AI REVIEW"
-    _fab_display = "flex" if _review_enabled else "none"
-
     _terminal_html = f'''
     <style>
       @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&display=swap');
@@ -1731,11 +1724,6 @@ with tab_btc:
       .pnl-bar{{display:inline-block;width:100%;min-height:2px;margin:1px 0}}
       .bottom-bar{{background:var(--bg2);padding:5px 14px;display:flex;justify-content:space-between;font-size:8px;color:var(--dim);letter-spacing:1px;border-top:1px solid var(--brd);flex-shrink:0}}
       ::-webkit-scrollbar{{width:3px}}::-webkit-scrollbar-track{{background:var(--bg)}}::-webkit-scrollbar-thumb{{background:var(--brd);border-radius:3px}}
-      .review-fab{{position:absolute;bottom:42px;right:16px;z-index:100;cursor:pointer;background:transparent;border:1px solid var(--grn);border-radius:4px;padding:8px 16px;font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grn);transition:all 0.3s ease;display:flex;align-items:center;gap:6px}}
-      .review-fab:hover{{background:rgba(0,255,136,0.1);box-shadow:0 0 20px rgba(0,255,136,0.2)}}
-      .review-fab.running{{border-color:var(--org);color:var(--org);pointer-events:none;opacity:0.7}}
-      .review-fab.running .fab-dot{{background:var(--org);box-shadow:0 0 8px var(--org);animation:pulse 1s infinite}}
-      .fab-dot{{width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 6px var(--grn)}}
     </style>
     <div class="terminal">
       <div class="top-bar">
@@ -1833,9 +1821,6 @@ with tab_btc:
           </div>
         </div>
       </div>
-      <div class="{_fab_class}" id="reviewFab" style="display:{_fab_display}" onclick="triggerReview()">
-        <span class="fab-dot"></span>{_fab_label}
-      </div>
       <div class="bottom-bar">
         <div style="color:var(--grn);font-weight:600">{_sig_state} · MKT {_sig_mid}</div>
         <div>BTC {_btc_str}</div>
@@ -1878,22 +1863,21 @@ with tab_btc:
     data.forEach(function(v,i){{var bh=Math.abs(v)/mx*(h*.4),x=i*(bw+2),y=v>=0?h/2-bh:h/2;
     ctx.fillStyle=v>=0?'#00ff88':'#ff3366';ctx.shadowColor=v>=0?'#00ff88':'#ff3366';ctx.shadowBlur=4;
     ctx.fillRect(x,y,bw,bh);ctx.shadowBlur=0}})}}();
-    // AI Review button
-    function triggerReview(){{
-      var fab=document.getElementById('reviewFab');
-      if(!fab||fab.classList.contains('running'))return;
-      fab.classList.add('running');
-      var dot=fab.querySelector('.fab-dot');if(dot)dot.style.background='#ff8800';
-      fab.childNodes[fab.childNodes.length-1].textContent='ANALYZING...';
-      window.parent.postMessage({{type:'streamlit:setComponentValue',value:true}},'*');
-    }}
     </script>
     '''
 
-    _review_clicked = components.html(_terminal_html, height=740, scrolling=True)
-    if _review_clicked and st.session_state.get("btc_review_enabled", True):
-        st.session_state["btc_review_requested"] = True
-        st.rerun()
+    components.html(_terminal_html, height=740, scrolling=True)
+
+    # ── AI Review trigger button (Streamlit native — outside iframe) ──
+    if st.session_state.get("btc_review_enabled", True):
+        _rev_running = st.session_state.get("btc_review_status") == "running"
+        if st.button(
+            "ANALYZING..." if _rev_running else "AI REVIEW",
+            key="btc_review_btn",
+            disabled=_rev_running,
+        ):
+            st.session_state["btc_review_requested"] = True
+            st.rerun()
 
     # ── AI Review Results (inline) ──
     _rev_status = st.session_state.get("btc_review_status")
