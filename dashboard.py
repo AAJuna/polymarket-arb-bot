@@ -5,6 +5,7 @@ Run: streamlit run dashboard.py
 """
 
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from html import escape as html_esc
@@ -15,6 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import config
+from btc.trade_journal import run_review as btc_run_review
 from utils import format_time_remaining, parse_iso, seconds_until
 
 # ---------------------------------------------------------------------------
@@ -466,6 +468,40 @@ ai_filter_stats = load_json(AI_FILTER_STATS_FILE)
 feed_status = load_json(REALTIME_FEED_STATUS_FILE)
 btc_data = load_json(BTC_PORTFOLIO_FILE)
 btc_signal = load_json(BTC_SIGNAL_FILE)
+
+# ---------------------------------------------------------------------------
+# BTC AI Review — session state & background thread
+# ---------------------------------------------------------------------------
+
+BTC_REVIEW_FILE = Path("data/btc/strategy_review.json")
+
+for _key, _default in [
+    ("btc_review_enabled", True),
+    ("btc_review_requested", False),
+    ("btc_review_status", None),      # None | "running" | "done"
+    ("btc_review_result", None),
+]:
+    if _key not in st.session_state:
+        st.session_state[_key] = _default
+
+
+def _bg_review():
+    """Run trade review in background thread, store result in session_state."""
+    try:
+        result = btc_run_review()
+        st.session_state["btc_review_result"] = result
+        st.session_state["btc_review_status"] = "done"
+    except Exception as e:
+        st.session_state["btc_review_result"] = {"error": str(e)}
+        st.session_state["btc_review_status"] = "done"
+
+
+if st.session_state["btc_review_requested"] and st.session_state["btc_review_status"] != "running":
+    st.session_state["btc_review_requested"] = False
+    st.session_state["btc_review_status"] = "running"
+    st.session_state["btc_review_result"] = None
+    t = threading.Thread(target=_bg_review, daemon=True)
+    t.start()
 
 # ---------------------------------------------------------------------------
 # Header
@@ -1503,8 +1539,19 @@ with tab_config:
             + cfg_row("Realtime Gate", "ON" if config.ENABLE_REALTIME_EXECUTION_GATE else "OFF")
             + cfg_row("Max Spread", f"{config.REALTIME_GATE_MAX_SPREAD:.4f}")
             + cfg_row("Min Depth ($)", f"${config.REALTIME_GATE_MIN_DEPTH_USD:,.0f}")
+            + cfg_row("BTC AI Review", "ON" if st.session_state.get("btc_review_enabled", True) else "OFF")
             + '</div>',
         )
+
+    # BTC AI Review toggle
+    _review_on = st.checkbox(
+        "Enable BTC AI Review Button",
+        value=st.session_state.get("btc_review_enabled", True),
+        key="btc_review_toggle",
+    )
+    if _review_on != st.session_state.get("btc_review_enabled", True):
+        st.session_state["btc_review_enabled"] = _review_on
+        st.rerun()
 
 # ---------------------------------------------------------------------------
 # TAB: BTC 5M
@@ -1601,6 +1648,13 @@ with tab_btc:
     _pnl_sign = "+" if _total_pnl >= 0 else ""
     _pnl_color_hex = "#00ff88" if _total_pnl >= 0 else "#ff3366"
 
+    # Review button state
+    _review_enabled = st.session_state.get("btc_review_enabled", True)
+    _review_status = st.session_state.get("btc_review_status")
+    _fab_class = "review-fab running" if _review_status == "running" else "review-fab"
+    _fab_label = "ANALYZING..." if _review_status == "running" else "AI REVIEW"
+    _fab_display = "flex" if _review_enabled else "none"
+
     _terminal_html = f'''
     <style>
       @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&display=swap');
@@ -1677,6 +1731,11 @@ with tab_btc:
       .pnl-bar{{display:inline-block;width:100%;min-height:2px;margin:1px 0}}
       .bottom-bar{{background:var(--bg2);padding:5px 14px;display:flex;justify-content:space-between;font-size:8px;color:var(--dim);letter-spacing:1px;border-top:1px solid var(--brd);flex-shrink:0}}
       ::-webkit-scrollbar{{width:3px}}::-webkit-scrollbar-track{{background:var(--bg)}}::-webkit-scrollbar-thumb{{background:var(--brd);border-radius:3px}}
+      .review-fab{{position:absolute;bottom:42px;right:16px;z-index:100;cursor:pointer;background:transparent;border:1px solid var(--grn);border-radius:4px;padding:8px 16px;font-family:'Orbitron',sans-serif;font-size:8px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grn);transition:all 0.3s ease;display:flex;align-items:center;gap:6px}}
+      .review-fab:hover{{background:rgba(0,255,136,0.1);box-shadow:0 0 20px rgba(0,255,136,0.2)}}
+      .review-fab.running{{border-color:var(--org);color:var(--org);pointer-events:none;opacity:0.7}}
+      .review-fab.running .fab-dot{{background:var(--org);box-shadow:0 0 8px var(--org);animation:pulse 1s infinite}}
+      .fab-dot{{width:6px;height:6px;border-radius:50%;background:var(--grn);box-shadow:0 0 6px var(--grn)}}
     </style>
     <div class="terminal">
       <div class="top-bar">
@@ -1774,6 +1833,9 @@ with tab_btc:
           </div>
         </div>
       </div>
+      <div class="{_fab_class}" id="reviewFab" style="display:{_fab_display}" onclick="triggerReview()">
+        <span class="fab-dot"></span>{_fab_label}
+      </div>
       <div class="bottom-bar">
         <div style="color:var(--grn);font-weight:600">{_sig_state} · MKT {_sig_mid}</div>
         <div>BTC {_btc_str}</div>
@@ -1816,14 +1878,179 @@ with tab_btc:
     data.forEach(function(v,i){{var bh=Math.abs(v)/mx*(h*.4),x=i*(bw+2),y=v>=0?h/2-bh:h/2;
     ctx.fillStyle=v>=0?'#00ff88':'#ff3366';ctx.shadowColor=v>=0?'#00ff88':'#ff3366';ctx.shadowBlur=4;
     ctx.fillRect(x,y,bw,bh);ctx.shadowBlur=0}})}}();
+    // AI Review button
+    function triggerReview(){{
+      var fab=document.getElementById('reviewFab');
+      if(!fab||fab.classList.contains('running'))return;
+      fab.classList.add('running');
+      var dot=fab.querySelector('.fab-dot');if(dot)dot.style.background='#ff8800';
+      fab.childNodes[fab.childNodes.length-1].textContent='ANALYZING...';
+      window.parent.postMessage({{type:'streamlit:setComponentValue',value:true}},'*');
+    }}
     </script>
     '''
 
-    components.html(_terminal_html, height=740, scrolling=True)
+    _review_clicked = components.html(_terminal_html, height=740, scrolling=True)
+    if _review_clicked and st.session_state.get("btc_review_enabled", True):
+        st.session_state["btc_review_requested"] = True
+        st.rerun()
 
-    # (terminal dashboard rendered above via components.html)
+    # ── AI Review Results (inline) ──
+    _rev_status = st.session_state.get("btc_review_status")
+    _rev_result = st.session_state.get("btc_review_result")
 
-    # (old 2-column layout removed — terminal dashboard above)
+    if _rev_status == "running":
+        st.html(
+            '<div style="border:1px solid #ff880030;border-radius:4px;padding:16px;'
+            'background:rgba(255,136,0,0.03);font-family:\'JetBrains Mono\',monospace;'
+            'margin-top:8px;text-align:center">'
+            '<div style="color:#ff8800;font-size:11px;font-family:Orbitron,sans-serif;'
+            'font-weight:700;letter-spacing:3px">'
+            '⟳ OPUS ANALYZING TRADES...</div>'
+            '<div style="color:#3a3a5a;font-size:9px;margin-top:6px">'
+            'This may take 10-30 seconds</div></div>'
+        )
+
+    elif _rev_status == "done" and _rev_result:
+        _rev_err = _rev_result.get("error")
+        if _rev_err:
+            st.html(
+                f'<div style="border:1px solid #ff336630;border-radius:4px;padding:16px;'
+                f'background:rgba(255,51,102,0.03);font-family:\'JetBrains Mono\',monospace;'
+                f'margin-top:8px">'
+                f'<div style="color:#ff3366;font-size:10px">REVIEW ERROR: {html_esc(str(_rev_err))}</div>'
+                f'</div>'
+            )
+        else:
+            _rv_total = _rev_result.get("total_trades", 0)
+            _rv_wr = _rev_result.get("win_rate", 0)
+            _rv_pnl = _rev_result.get("total_pnl", 0)
+            _rv_wins = _rev_result.get("wins", 0)
+            _rv_losses = _rev_result.get("losses", 0)
+            _rv_avg_win = _rev_result.get("avg_win", 0)
+            _rv_avg_loss = _rev_result.get("avg_loss", 0)
+            _rv_strats = _rev_result.get("strategies", {})
+            _rv_brackets = _rev_result.get("confidence_brackets", {})
+            _rv_opus = _rev_result.get("opus_analysis", "")
+            _rv_time = _rev_result.get("reviewed_at", "")[:19].replace("T", " ")
+            _rv_pnl_color = "#00ff88" if _rv_pnl >= 0 else "#ff3366"
+
+            # Strategy rows
+            _strat_rows = ""
+            for _sname, _sd in _rv_strats.items():
+                _s_pnl_c = "#00ff88" if _sd.get("pnl", 0) >= 0 else "#ff3366"
+                _strat_rows += (
+                    f'<div style="display:grid;grid-template-columns:1fr repeat(4,80px);'
+                    f'gap:4px;padding:4px 0;border-bottom:1px solid #1a1a2e;font-size:9px">'
+                    f'<div style="color:#00aaff">{html_esc(_sname)}</div>'
+                    f'<div style="color:#e0e0e8;text-align:center">{_sd.get("trades", 0)}</div>'
+                    f'<div style="color:#e0e0e8;text-align:center">{_sd.get("win_rate", 0):.1f}%</div>'
+                    f'<div style="color:{_s_pnl_c};text-align:center">${_sd.get("pnl", 0):+.2f}</div>'
+                    f'<div style="color:#e0e0e8;text-align:center">{_sd.get("roi", 0):+.1f}%</div></div>'
+                )
+
+            # Confidence bracket rows
+            _bracket_rows = ""
+            for _bname, _bd_item in _rv_brackets.items():
+                _b_pnl_c = "#00ff88" if _bd_item.get("total_pnl", 0) >= 0 else "#ff3366"
+                _bracket_rows += (
+                    f'<div style="display:grid;grid-template-columns:1fr repeat(3,80px);'
+                    f'gap:4px;padding:4px 0;border-bottom:1px solid #1a1a2e;font-size:9px">'
+                    f'<div style="color:#00ffcc">{html_esc(_bname)}</div>'
+                    f'<div style="color:#e0e0e8;text-align:center">{_bd_item.get("trades", 0)}</div>'
+                    f'<div style="color:#e0e0e8;text-align:center">{_bd_item.get("win_rate", 0):.1f}%</div>'
+                    f'<div style="color:{_b_pnl_c};text-align:center">${_bd_item.get("total_pnl", 0):+.2f}</div>'
+                    f'</div>'
+                )
+
+            # Opus analysis text
+            if _rv_opus:
+                _opus_lines = html_esc(_rv_opus).replace("\n", "<br>")
+                _opus_html = (
+                    f'<div style="margin-top:12px;border-top:1px solid #1a1a2e;padding-top:12px">'
+                    f'<div style="color:#ff8800;font-family:Orbitron,sans-serif;font-size:8px;'
+                    f'font-weight:700;letter-spacing:2px;margin-bottom:8px">'
+                    f'OPUS STRATEGIC ANALYSIS</div>'
+                    f'<div style="color:#b0b0c0;font-size:9px;line-height:1.7;'
+                    f'white-space:pre-wrap">{_opus_lines}</div></div>'
+                )
+            else:
+                _opus_html = (
+                    '<div style="margin-top:12px;border-top:1px solid #1a1a2e;padding-top:12px;'
+                    'color:#3a3a5a;font-size:9px;text-align:center">'
+                    'AI analysis unavailable (no API key or API error)</div>'
+                )
+
+            st.html(
+                f'<div style="border:1px solid #00ff8820;border-radius:4px;padding:16px 20px;'
+                f'background:rgba(0,255,136,0.02);font-family:\'JetBrains Mono\',monospace;'
+                f'margin-top:8px">'
+                # Header
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                f'margin-bottom:14px">'
+                f'<div style="color:#00ff88;font-family:Orbitron,sans-serif;font-size:10px;'
+                f'font-weight:700;letter-spacing:3px">AI STRATEGY REVIEW</div>'
+                f'<div style="color:#3a3a5a;font-size:8px">{_rv_time} UTC</div></div>'
+                # Stats grid
+                f'<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;'
+                f'margin-bottom:14px">'
+                f'<div style="text-align:center;padding:8px;background:#0a0a12;border-radius:3px">'
+                f'<div style="color:#3a3a5a;font-size:7px;letter-spacing:1px">TRADES</div>'
+                f'<div style="color:#00aaff;font-size:16px;font-weight:700;'
+                f'font-family:Orbitron,sans-serif">{_rv_total}</div></div>'
+                f'<div style="text-align:center;padding:8px;background:#0a0a12;border-radius:3px">'
+                f'<div style="color:#3a3a5a;font-size:7px;letter-spacing:1px">WIN RATE</div>'
+                f'<div style="color:#00ff88;font-size:16px;font-weight:700;'
+                f'font-family:Orbitron,sans-serif">{_rv_wr:.1f}%</div></div>'
+                f'<div style="text-align:center;padding:8px;background:#0a0a12;border-radius:3px">'
+                f'<div style="color:#3a3a5a;font-size:7px;letter-spacing:1px">P&amp;L</div>'
+                f'<div style="color:{_rv_pnl_color};font-size:16px;font-weight:700;'
+                f'font-family:Orbitron,sans-serif">${_rv_pnl:+.2f}</div></div>'
+                f'<div style="text-align:center;padding:8px;background:#0a0a12;border-radius:3px">'
+                f'<div style="color:#3a3a5a;font-size:7px;letter-spacing:1px">WINS</div>'
+                f'<div style="color:#00ff88;font-size:16px;font-weight:700;'
+                f'font-family:Orbitron,sans-serif">{_rv_wins}</div></div>'
+                f'<div style="text-align:center;padding:8px;background:#0a0a12;border-radius:3px">'
+                f'<div style="color:#3a3a5a;font-size:7px;letter-spacing:1px">LOSSES</div>'
+                f'<div style="color:#ff3366;font-size:16px;font-weight:700;'
+                f'font-family:Orbitron,sans-serif">{_rv_losses}</div></div>'
+                f'<div style="text-align:center;padding:8px;background:#0a0a12;border-radius:3px">'
+                f'<div style="color:#3a3a5a;font-size:7px;letter-spacing:1px">AVG W/L</div>'
+                f'<div style="font-size:10px;font-weight:700;font-family:Orbitron,sans-serif">'
+                f'<span style="color:#00ff88">${_rv_avg_win:+.2f}</span>'
+                f'<span style="color:#3a3a5a"> / </span>'
+                f'<span style="color:#ff3366">${_rv_avg_loss:+.2f}</span></div></div>'
+                f'</div>'
+                # Strategy breakdown
+                f'<div style="margin-bottom:12px">'
+                f'<div style="color:#ff8800;font-family:Orbitron,sans-serif;font-size:8px;'
+                f'font-weight:700;letter-spacing:2px;margin-bottom:6px">STRATEGY BREAKDOWN</div>'
+                f'<div style="display:grid;grid-template-columns:1fr repeat(4,80px);gap:4px;'
+                f'padding:4px 0;border-bottom:1px solid #1a1a2e40;font-size:8px;color:#3a3a5a">'
+                f'<div>STRATEGY</div><div style="text-align:center">TRADES</div>'
+                f'<div style="text-align:center">WIN %</div><div style="text-align:center">P&amp;L</div>'
+                f'<div style="text-align:center">ROI</div></div>'
+                f'{_strat_rows}</div>'
+                # Confidence brackets
+                f'<div style="margin-bottom:4px">'
+                f'<div style="color:#00ffcc;font-family:Orbitron,sans-serif;font-size:8px;'
+                f'font-weight:700;letter-spacing:2px;margin-bottom:6px">CONFIDENCE BRACKETS</div>'
+                f'<div style="display:grid;grid-template-columns:1fr repeat(3,80px);gap:4px;'
+                f'padding:4px 0;border-bottom:1px solid #1a1a2e40;font-size:8px;color:#3a3a5a">'
+                f'<div>BRACKET</div><div style="text-align:center">TRADES</div>'
+                f'<div style="text-align:center">WIN %</div><div style="text-align:center">P&amp;L</div>'
+                f'</div>'
+                f'{_bracket_rows}</div>'
+                # Opus analysis
+                f'{_opus_html}'
+                f'</div>'
+            )
+
+        # Dismiss button
+        if st.button("DISMISS REVIEW", key="btc_dismiss_review"):
+            st.session_state["btc_review_status"] = None
+            st.session_state["btc_review_result"] = None
+            st.rerun()
 
 # ---------------------------------------------------------------------------
 # Footer
