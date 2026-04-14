@@ -20,7 +20,58 @@ logger = get_logger(__name__)
 JOURNAL_FILE = Path("data/btc/trade_journal.jsonl")
 LEDGER_FILE = Path("data/btc/trade_ledger.jsonl")
 REVIEW_FILE = Path("data/btc/strategy_review.json")
+REVIEW_HISTORY_FILE = Path("data/btc/review_history.jsonl")
 REVIEW_INTERVAL = 50  # evaluate every N trades
+
+
+def _snapshot_config() -> dict:
+    """Snapshot current BTC config for review comparison."""
+    try:
+        from btc import config_btc as cfg
+        return {
+            "blocked_strategies": list(getattr(cfg, "BLOCKED_STRATEGIES", [])),
+            "max_ai_confidence": getattr(cfg, "MAX_AI_CONFIDENCE", None),
+            "min_confidence": getattr(cfg, "MIN_CONFIDENCE", None),
+            "bet_confidence_scale": getattr(cfg, "BET_CONFIDENCE_SCALE", None),
+            "consecutive_loss_pause": getattr(cfg, "CONSECUTIVE_LOSS_PAUSE", None),
+            "consecutive_loss_reduce": getattr(cfg, "CONSECUTIVE_LOSS_REDUCE", None),
+            "pause_duration_min": getattr(cfg, "PAUSE_DURATION_MINUTES", None),
+            "max_concurrent_windows": getattr(cfg, "MAX_CONCURRENT_WINDOWS", None),
+            "max_entry_price": getattr(cfg, "MAX_ENTRY_PRICE", None),
+            "bet_size_pct": getattr(cfg, "BET_SIZE_PCT", None),
+        }
+    except Exception:
+        return {}
+
+
+def _load_last_review() -> Optional[dict]:
+    """Return last review from history, or None if empty/missing."""
+    if not REVIEW_HISTORY_FILE.exists():
+        return None
+    try:
+        with open(REVIEW_HISTORY_FILE, "r", encoding="utf-8") as f:
+            last = None
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    last = json.loads(line)
+                except Exception:
+                    continue
+            return last
+    except Exception:
+        return None
+
+
+def _append_history(entry: dict) -> None:
+    """Append a review entry to review_history.jsonl."""
+    try:
+        REVIEW_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(REVIEW_HISTORY_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to append review history: {e}")
 
 
 def log_trade(
@@ -191,8 +242,42 @@ def run_review() -> dict:
     for s, d in strategies.items():
         logger.info(f"  [{s}] {d['trades']}t {d['win_rate']}% wr P&L=${d['pnl']:+.2f} ROI={d['roi']}%")
 
+    # Load previous review for compliance check
+    prev_review = _load_last_review()
+    current_config = _snapshot_config()
+
+    # Compute stats for trades added since last review
+    post_review_stats = None
+    if prev_review:
+        prev_total = prev_review.get("total_trades_at_review", 0)
+        new_trades = results[prev_total:]
+        if new_trades:
+            n_new = len(new_trades)
+            n_wins = sum(1 for r in new_trades if r["pnl"] > 0)
+            n_pnl = sum(r["pnl"] for r in new_trades)
+            post_strats: dict = {}
+            for r in new_trades:
+                s = r["strategy"] or "unknown"
+                if s not in post_strats:
+                    post_strats[s] = {"trades": 0, "wins": 0, "pnl": 0.0}
+                post_strats[s]["trades"] += 1
+                post_strats[s]["pnl"] += r["pnl"]
+                if r["pnl"] > 0:
+                    post_strats[s]["wins"] += 1
+            for s, d in post_strats.items():
+                d["win_rate"] = round(d["wins"] / max(1, d["trades"]) * 100, 1)
+                d["pnl"] = round(d["pnl"], 4)
+            post_review_stats = {
+                "trades": n_new,
+                "wins": n_wins,
+                "losses": n_new - n_wins,
+                "win_rate": round(n_wins / max(1, n_new) * 100, 1),
+                "total_pnl": round(n_pnl, 4),
+                "strategies": post_strats,
+            }
+
     # Send to Claude Opus for deep analysis
-    opus_analysis = _opus_review(results, review)
+    opus_analysis = _opus_review(results, review, prev_review, current_config, post_review_stats)
     if opus_analysis:
         review["opus_analysis"] = opus_analysis
         logger.info(f"OPUS EVALUATION:")
@@ -210,10 +295,26 @@ def run_review() -> dict:
     except Exception:
         pass
 
+    # Append to history (always, even if Opus failed)
+    _append_history({
+        "timestamp": review["reviewed_at"],
+        "total_trades_at_review": total,
+        "win_rate": review["win_rate"],
+        "total_pnl": review["total_pnl"],
+        "opus_analysis": opus_analysis or "",
+        "config_snapshot": current_config,
+    })
+
     return review
 
 
-def _opus_review(results: list[dict], stats: dict) -> Optional[str]:
+def _opus_review(
+    results: list[dict],
+    stats: dict,
+    prev_review: Optional[dict] = None,
+    current_config: Optional[dict] = None,
+    post_review_stats: Optional[dict] = None,
+) -> Optional[str]:
     """Send trade data to Claude Opus for strategic evaluation."""
     try:
         import os
@@ -248,10 +349,49 @@ def _opus_review(results: list[dict], stats: dict) -> Optional[str]:
         )
     strat_str = "\n".join(strat_lines)
 
+    # Build compliance section if prev_review exists
+    compliance_section = ""
+    compliance_instruction = ""
+    if prev_review and prev_review.get("opus_analysis"):
+        prev_ts = prev_review.get("timestamp", "")
+        prev_total = prev_review.get("total_trades_at_review", 0)
+        prev_config = prev_review.get("config_snapshot", {})
+        prev_analysis = prev_review.get("opus_analysis", "")
+        post_stats_json = (
+            json.dumps(post_review_stats, indent=2) if post_review_stats
+            else "No trades since last review"
+        )
+        compliance_section = f"""
+PREVIOUS REVIEW ({prev_ts}, {prev_total} trades at that time):
+{prev_analysis}
+
+CONFIG AT PREVIOUS REVIEW:
+{json.dumps(prev_config, indent=2)}
+
+CURRENT CONFIG:
+{json.dumps(current_config or {}, indent=2)}
+
+TRADES SINCE PREVIOUS REVIEW:
+{post_stats_json}
+"""
+        compliance_instruction = """
+FIRST, output a section titled "# PREVIOUS RECOMMENDATIONS STATUS".
+For EACH actionable recommendation from the previous review, mark it:
+- ✅ APPLIED — current config/behavior matches the recommendation
+- ❌ NOT APPLIED — recommendation was made but config/behavior unchanged
+- ⚠️ PARTIAL — some aspects applied, others not
+
+Include specific evidence (config values, trade stats) for each verdict.
+Then briefly evaluate whether the applied changes improved performance
+(compare trades-since-review stats to overall stats).
+
+THEN continue with the normal evaluation below.
+"""
+
     prompt = f"""You are evaluating a BTC 5-minute prediction bot on Polymarket.
 The bot uses Claude Haiku to analyze 60 seconds of BTC price data, then decides UP or DOWN.
-
-PERFORMANCE SUMMARY:
+{compliance_section}
+PERFORMANCE SUMMARY (all trades):
 - Total trades: {stats['total_trades']}
 - Win rate: {stats['win_rate']}%
 - Total P&L: ${stats['total_pnl']:+.2f}
@@ -263,9 +403,9 @@ STRATEGY BREAKDOWN:
 CONFIDENCE BRACKETS:
 {json.dumps(stats.get('confidence_brackets', {}), indent=2)}
 
-RECENT TRADES:
+RECENT TRADES (last 50):
 {trades_str}
-
+{compliance_instruction}
 EVALUATE:
 1. Which strategy performs best and why?
 2. Should the bot favor one strategy over another?
@@ -279,7 +419,7 @@ Be concise and actionable. Focus on what to CHANGE, not what's working fine."""
     try:
         response = client.messages.create(
             model="claude-opus-4-6",
-            max_tokens=800,
+            max_tokens=1600,
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
