@@ -2031,15 +2031,71 @@ with tab_btc:
                     'AI analysis unavailable (no API key or API error)</div>'
                 )
 
-        # Dismiss button
-        if st.button("DISMISS REVIEW", key="btc_dismiss_review"):
-            try:
-                BTC_REVIEW_STATUS_FILE.write_text(
-                    json.dumps({"status": None}), encoding="utf-8"
+        # Build markdown export (only if we have a non-error result)
+        _dl_col, _rm_col = st.columns([1, 1])
+        if not _rev_err and _rev_result:
+            _md_lines = [
+                f"# BTC AI Strategy Review",
+                f"",
+                f"**Generated:** {_rv_time} UTC  ",
+                f"**Total Trades:** {_rv_total}  ",
+                f"**Win Rate:** {_rv_wr:.1f}% ({_rv_wins}W / {_rv_losses}L)  ",
+                f"**Total P&L:** ${_rv_pnl:+.2f}  ",
+                f"**Avg Win / Avg Loss:** ${_rv_avg_win:+.2f} / ${_rv_avg_loss:+.2f}",
+                f"",
+                f"## Strategy Breakdown",
+                f"",
+                f"| Strategy | Trades | Win Rate | P&L | ROI |",
+                f"|---|---|---|---|---|",
+            ]
+            for _sn, _sd in _rv_strats.items():
+                _md_lines.append(
+                    f"| {_sn} | {_sd.get('trades', 0)} | "
+                    f"{_sd.get('win_rate', 0):.1f}% | "
+                    f"${_sd.get('pnl', 0):+.2f} | "
+                    f"{_sd.get('roi', 0):+.1f}% |"
                 )
-            except Exception:
-                pass
-            st.rerun()
+            _md_lines += [
+                f"",
+                f"## Confidence Brackets",
+                f"",
+                f"| Bracket | Trades | Win Rate | P&L |",
+                f"|---|---|---|---|",
+            ]
+            for _bn, _bi in _rv_brackets.items():
+                _md_lines.append(
+                    f"| {_bn} | {_bi.get('trades', 0)} | "
+                    f"{_bi.get('win_rate', 0):.1f}% | "
+                    f"${_bi.get('total_pnl', 0):+.2f} |"
+                )
+            if _rv_opus:
+                _md_lines += [
+                    f"",
+                    f"## Opus Strategic Analysis",
+                    f"",
+                    _rv_opus,
+                ]
+            _md_content = "\n".join(_md_lines)
+            _filename = f"btc-review-{_rv_time.replace(' ', '_').replace(':', '-')}.md"
+            with _dl_col:
+                st.download_button(
+                    label="📥 DOWNLOAD REVIEW (.md)",
+                    data=_md_content,
+                    file_name=_filename,
+                    mime="text/markdown",
+                    key="btc_dl_review",
+                )
+
+        # Dismiss button
+        with _rm_col:
+            if st.button("DISMISS REVIEW", key="btc_dismiss_review"):
+                try:
+                    BTC_REVIEW_STATUS_FILE.write_text(
+                        json.dumps({"status": None}), encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+                st.rerun()
 
 # ---------------------------------------------------------------------------
 # Footer
