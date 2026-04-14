@@ -21,7 +21,6 @@ JOURNAL_FILE = Path("data/btc/trade_journal.jsonl")
 LEDGER_FILE = Path("data/btc/trade_ledger.jsonl")
 REVIEW_FILE = Path("data/btc/strategy_review.json")
 REVIEW_HISTORY_FILE = Path("data/btc/review_history.jsonl")
-REVIEW_INTERVAL = 50  # evaluate every N trades
 
 
 def _snapshot_config() -> dict:
@@ -127,10 +126,22 @@ def log_result(
     }
     _append(entry)
 
-    # Check if we should run auto-review
-    total = _count_closed()
-    if total > 0 and total % REVIEW_INTERVAL == 0:
+    # Auto-trigger review if >24h since last one (and at least 1 closed trade)
+    if _count_closed() > 0 and _hours_since_last_review() >= 24:
         run_review()
+
+
+def _hours_since_last_review() -> float:
+    """Hours since last review. Returns large number if no history."""
+    last = _load_last_review()
+    if not last:
+        return 9999.0
+    try:
+        ts = datetime.fromisoformat(last.get("timestamp", "").replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - ts
+        return delta.total_seconds() / 3600
+    except Exception:
+        return 9999.0
 
 
 def run_review() -> dict:
