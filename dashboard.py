@@ -1951,24 +1951,6 @@ with tab_btc:
                     f'</div>'
                 )
 
-            # Opus analysis text
-            if _rv_opus:
-                _opus_lines = html_esc(_rv_opus).replace("\n", "<br>")
-                _opus_html = (
-                    f'<div style="margin-top:12px;border-top:1px solid #1a1a2e;padding-top:12px">'
-                    f'<div style="color:#ff8800;font-family:Orbitron,sans-serif;font-size:8px;'
-                    f'font-weight:700;letter-spacing:2px;margin-bottom:8px">'
-                    f'OPUS STRATEGIC ANALYSIS</div>'
-                    f'<div style="color:#b0b0c0;font-size:9px;line-height:1.7;'
-                    f'white-space:pre-wrap">{_opus_lines}</div></div>'
-                )
-            else:
-                _opus_html = (
-                    '<div style="margin-top:12px;border-top:1px solid #1a1a2e;padding-top:12px;'
-                    'color:#3a3a5a;font-size:9px;text-align:center">'
-                    'AI analysis unavailable (no API key or API error)</div>'
-                )
-
             st.html(
                 f'<div style="border:1px solid #00ff8820;border-radius:4px;padding:16px 20px;'
                 f'background:rgba(0,255,136,0.02);font-family:\'JetBrains Mono\',monospace;'
@@ -2029,10 +2011,25 @@ with tab_btc:
                 f'<div style="text-align:center">WIN %</div><div style="text-align:center">P&amp;L</div>'
                 f'</div>'
                 f'{_bracket_rows}</div>'
-                # Opus analysis
-                f'{_opus_html}'
                 f'</div>'
             )
+
+            # Opus analysis — rendered as proper markdown (readable, full content)
+            if _rv_opus:
+                st.html(
+                    '<div style="color:#ff8800;font-family:Orbitron,sans-serif;'
+                    'font-size:12px;font-weight:700;letter-spacing:3px;'
+                    'margin:20px 0 10px 0;padding-top:12px;'
+                    'border-top:1px solid #1a1a2e">'
+                    'OPUS STRATEGIC ANALYSIS</div>'
+                )
+                st.markdown(_rv_opus)
+            else:
+                st.html(
+                    '<div style="color:#3a3a5a;font-size:11px;text-align:center;'
+                    'margin-top:16px;padding:12px">'
+                    'AI analysis unavailable (no API key or API error)</div>'
+                )
 
         # Dismiss button
         if st.button("DISMISS REVIEW", key="btc_dismiss_review"):

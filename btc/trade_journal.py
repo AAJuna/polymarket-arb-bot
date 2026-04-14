@@ -419,7 +419,7 @@ Be concise and actionable. Focus on what to CHANGE, not what's working fine."""
     try:
         response = client.messages.create(
             model="claude-opus-4-6",
-            max_tokens=1600,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
