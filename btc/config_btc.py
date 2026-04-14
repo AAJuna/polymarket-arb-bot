@@ -77,9 +77,9 @@ MAX_CONCURRENT_WINDOWS: int = int(os.getenv("BTC_MAX_CONCURRENT_WINDOWS", "1"))
 # ---------------------------------------------------------------------------
 DRAWDOWN_REDUCE_THRESHOLD: float = 0.20
 DRAWDOWN_STOP_THRESHOLD: float = 0.40
-CONSECUTIVE_LOSS_REDUCE: int = 5
-CONSECUTIVE_LOSS_PAUSE: int = 10
-PAUSE_DURATION_MINUTES: int = 30
+CONSECUTIVE_LOSS_REDUCE: int = int(os.getenv("BTC_CONSECUTIVE_LOSS_REDUCE", "2"))
+CONSECUTIVE_LOSS_PAUSE: int = int(os.getenv("BTC_CONSECUTIVE_LOSS_PAUSE", "3"))
+PAUSE_DURATION_MINUTES: int = int(os.getenv("BTC_PAUSE_DURATION_MINUTES", "15"))
 DAILY_LOSS_LIMIT_PCT: float = 0.25
 
 # ---------------------------------------------------------------------------

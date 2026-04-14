@@ -263,11 +263,19 @@ SUMMARY:
 TASK:
 You MUST pick UP or DOWN. Analyze the 60-second price data and predict whether BTC will finish UP or DOWN relative to the start of this 5-minute window.
 
-Choose your strategy:
-- momentum: price trending in one direction
-- volatility_breakout: breaking out of range
-- trend_following: established direction continuing
-- btc_signal: strong decisive signal from price action
+Choose your strategy (PREFER btc_signal — it's the only strategy with proven edge):
+- btc_signal: clear, decisive signal — use this whenever you see ANY of:
+  * Strong directional trend with volume confirmation
+  * Clear breakout from recent range
+  * Price action clearly favoring one direction
+  * Well-defined support/resistance break
+  DEFAULT to btc_signal when uncertain between btc_signal and momentum.
+- momentum: only for weak/marginal signals where btc_signal doesn't fit
+- volatility_breakout: only for explicit range-breaking moves
+- trend_following: only for obvious multi-minute trend continuation
+
+IMPORTANT: btc_signal has 61% historical win rate, momentum has 43%.
+When in doubt between strategies, ALWAYS pick btc_signal.
 
 Rules:
 - ALWAYS pick UP or DOWN. You are a trader, not an observer.

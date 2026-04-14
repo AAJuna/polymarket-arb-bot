@@ -259,6 +259,9 @@ def run() -> None:
     # Patch shared config so Executor/RiskManager use BTC settings
     import config as shared_config
     shared_config.PAPER_TRADING = cfg.PAPER_TRADING
+    shared_config.CONSECUTIVE_LOSS_REDUCE = cfg.CONSECUTIVE_LOSS_REDUCE
+    shared_config.CONSECUTIVE_LOSS_PAUSE = cfg.CONSECUTIVE_LOSS_PAUSE
+    shared_config.PAUSE_DURATION_MINUTES = cfg.PAUSE_DURATION_MINUTES
 
     from portfolio import Portfolio
     from executor import Executor
@@ -485,6 +488,25 @@ def run() -> None:
                     )
                     size_dollars = min(size_dollars, cfg.MAX_POSITION_SIZE)
                     can_trade, block_reason = risk_mgr.can_trade(opp, size_dollars)
+
+                    # Guard: block simultaneous opposing positions in same market
+                    # and enforce MAX_CONCURRENT_WINDOWS
+                    if can_trade:
+                        open_for_this_market = [
+                            p for p in port.state.open_positions.values()
+                            if getattr(p, "market_id", None) == opp.market_id
+                        ]
+                        if any(getattr(p, "side", None) != opp.side for p in open_for_this_market):
+                            can_trade = False
+                            block_reason = (
+                                f"opposing position already open in market {opp.market_id}"
+                            )
+                        elif len(port.state.open_positions) >= cfg.MAX_CONCURRENT_WINDOWS:
+                            can_trade = False
+                            block_reason = (
+                                f"max concurrent windows reached "
+                                f"({len(port.state.open_positions)}/{cfg.MAX_CONCURRENT_WINDOWS})"
+                            )
 
                     if can_trade:
                         result = executor.place_order(opp, size_dollars)
