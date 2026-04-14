@@ -201,9 +201,27 @@ class BtcAIAnalyzer:
             self._total_cost += (input_tok * 1.0 + output_tok * 5.0) / 1_000_000
             self._save_stats()
 
-            verdict = "PASS" if analysis.is_valid else "SKIP"
+            # Explicit SKIP reason for diagnostics
+            if analysis.is_valid:
+                verdict = "PASS"
+                skip_reason = ""
+            else:
+                verdict = "SKIP"
+                if analysis.side == "SKIP":
+                    # Check the reasoning prefix to find why
+                    if analysis.reasoning.startswith("Blocked strategy"):
+                        skip_reason = " [reason: blocked_strategy]"
+                    elif analysis.reasoning.startswith("Overconfident"):
+                        skip_reason = " [reason: max_conf_cap]"
+                    else:
+                        skip_reason = " [reason: haiku_returned_skip]"
+                elif analysis.confidence < cfg.MIN_CONFIDENCE:
+                    skip_reason = f" [reason: conf<{cfg.MIN_CONFIDENCE:.0%}]"
+                else:
+                    skip_reason = " [reason: unknown]"
+
             logger.info(
-                f"AI [{verdict}] {analysis.side}  conf={analysis.confidence:.0%}  "
+                f"AI [{verdict}]{skip_reason} {analysis.side}  conf={analysis.confidence:.0%}  "
                 f"strategy={analysis.strategy}  | {analysis.reasoning[:60]}"
             )
             return analysis
@@ -263,19 +281,14 @@ SUMMARY:
 TASK:
 You MUST pick UP or DOWN. Analyze the 60-second price data and predict whether BTC will finish UP or DOWN relative to the start of this 5-minute window.
 
-Choose your strategy (PREFER btc_signal — it's the only strategy with proven edge):
-- btc_signal: clear, decisive signal — use this whenever you see ANY of:
-  * Strong directional trend with volume confirmation
-  * Clear breakout from recent range
-  * Price action clearly favoring one direction
-  * Well-defined support/resistance break
-  DEFAULT to btc_signal when uncertain between btc_signal and momentum.
-- momentum: only for weak/marginal signals where btc_signal doesn't fit
-- volatility_breakout: only for explicit range-breaking moves
-- trend_following: only for obvious multi-minute trend continuation
+Choose your strategy (only two allowed — others are currently blocked):
+- momentum: clear directional trend in the 60-second window — use this as your default
+- trend_following: obvious multi-minute trend continuation from broader price action
 
-IMPORTANT: btc_signal has 61% historical win rate, momentum has 43%.
-When in doubt between strategies, ALWAYS pick btc_signal.
+Do NOT use btc_signal, volatility_breakout, mean_reversion, or microstructure.
+Those strategies are currently disabled due to poor historical performance.
+
+PREFER momentum. Only use trend_following if there's a strong multi-minute trend visible.
 
 Rules:
 - ALWAYS pick UP or DOWN. You are a trader, not an observer.

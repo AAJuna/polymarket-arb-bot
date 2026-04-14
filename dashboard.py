@@ -2076,13 +2076,15 @@ with tab_btc:
                     _rv_opus,
                 ]
             _md_content = "\n".join(_md_lines)
+            # UTF-8 BOM ensures emoji and non-ASCII chars render correctly in editors
+            _md_bytes = "\ufeff".encode("utf-8") + _md_content.encode("utf-8")
             _filename = f"btc-review-{_rv_time.replace(' ', '_').replace(':', '-')}.md"
             with _dl_col:
                 st.download_button(
                     label="📥 DOWNLOAD REVIEW (.md)",
-                    data=_md_content,
+                    data=_md_bytes,
                     file_name=_filename,
-                    mime="text/markdown",
+                    mime="text/markdown; charset=utf-8",
                     key="btc_dl_review",
                 )
 

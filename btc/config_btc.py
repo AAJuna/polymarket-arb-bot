@@ -44,7 +44,7 @@ RTDS_RECONNECT_MAX: float = 30.0
 # Signal engine
 # ---------------------------------------------------------------------------
 MIN_EDGE_PCT: float = float(os.getenv("BTC_MIN_EDGE_PCT", "3.0"))
-MIN_CONFIDENCE: float = float(os.getenv("BTC_MIN_CONFIDENCE", "0.55"))
+MIN_CONFIDENCE: float = float(os.getenv("BTC_MIN_CONFIDENCE", "0.60"))
 MAX_AI_CONFIDENCE: float = float(os.getenv("BTC_MAX_AI_CONFIDENCE", "0.70"))
 VOLATILITY_LOOKBACK_SEC: int = int(os.getenv("BTC_VOLATILITY_LOOKBACK_SEC", "1800"))
 VOLATILITY_DEFAULT: float = float(os.getenv("BTC_VOLATILITY_DEFAULT", "0.50"))
@@ -59,15 +59,15 @@ MOMENTUM_CAP: float = 0.05  # max +/-5% adjustment
 # Trading parameters
 # ---------------------------------------------------------------------------
 MAX_POSITION_SIZE: float = float(os.getenv("BTC_MAX_POSITION_SIZE", "100.0"))
-BET_SIZE_PCT: float = float(os.getenv("BTC_BET_SIZE_PCT", "5.0"))  # base 5% of bankroll
+BET_SIZE_PCT: float = float(os.getenv("BTC_BET_SIZE_PCT", "3.0"))  # base 3% of bankroll (lowered from 5% - catastrophic single-trade losses)
 BET_CONFIDENCE_SCALE: float = 1.0  # flat sizing — Haiku confidence inversely correlated with WR
 ENTRY_DEADLINE_SEC: float = float(os.getenv("BTC_ENTRY_DEADLINE_SEC", "180.0"))
 EXIT_BEFORE_END_SEC: float = float(os.getenv("BTC_EXIT_BEFORE_END_SEC", "30.0"))
-MAX_ENTRY_PRICE: float = float(os.getenv("BTC_MAX_ENTRY_PRICE", "0.57"))  # skip if market price > this
+MAX_ENTRY_PRICE: float = float(os.getenv("BTC_MAX_ENTRY_PRICE", "0.53"))  # skip if market price > this (lowered from 0.57 - payoff asymmetry needs edge)
 BLOCKED_STRATEGIES: list[str] = [
     s.strip() for s in os.getenv(
         "BTC_BLOCKED_STRATEGIES",
-        "mean_reversion,microstructure,mean_reversion with momentum confirmation",
+        "mean_reversion,microstructure,mean_reversion with momentum confirmation,volatility_breakout,btc_signal",
     ).split(",") if s.strip()
 ]
 MAX_CONCURRENT_WINDOWS: int = int(os.getenv("BTC_MAX_CONCURRENT_WINDOWS", "1"))
@@ -78,7 +78,7 @@ MAX_CONCURRENT_WINDOWS: int = int(os.getenv("BTC_MAX_CONCURRENT_WINDOWS", "1"))
 DRAWDOWN_REDUCE_THRESHOLD: float = 0.20
 DRAWDOWN_STOP_THRESHOLD: float = 0.40
 CONSECUTIVE_LOSS_REDUCE: int = int(os.getenv("BTC_CONSECUTIVE_LOSS_REDUCE", "2"))
-CONSECUTIVE_LOSS_PAUSE: int = int(os.getenv("BTC_CONSECUTIVE_LOSS_PAUSE", "3"))
+CONSECUTIVE_LOSS_PAUSE: int = int(os.getenv("BTC_CONSECUTIVE_LOSS_PAUSE", "2"))
 PAUSE_DURATION_MINUTES: int = int(os.getenv("BTC_PAUSE_DURATION_MINUTES", "15"))
 DAILY_LOSS_LIMIT_PCT: float = 0.25
 
